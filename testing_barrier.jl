@@ -57,6 +57,8 @@ A = zeros(length(jacobian_sparsity))
 # Evaluate Jacobian
 MOI.eval_constraint_jacobian(evaluator, A, _values)
 
+# TODO: ∇ₓₚL (Partial second derivative of the lagrangian wrt primal solution and parameters) ; 
+# TODO: ∇ₚC (partial derivative of the equality constraintswith wrt parameters).
 
 ############
 # (WORK IN PROGRESS) - Non working code
