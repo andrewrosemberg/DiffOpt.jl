@@ -56,13 +56,19 @@ function _dense_jacobian(jacobian_sparsity, V, m, n)
 end
 
 # Primal Solution
-primal_values = value.([x, y])
+primal_values = value.([x, y, p, p2])
 dual_values = dual.([con1; con2; con3])
 num_vars = length(primal_values)
 num_cons = length(dual_values)
 
 # `Evaluator`: Object that helps evaluating functions and calculating related values (Hessian, Jacobian, ...)
-evaluator = JuMP.MOI.Nonlinear.Evaluator(model.moi_backend.optimizer.model.nlp_model, JuMP.MOI.Nonlinear.SparseReverseMode(), [model.moi_backend.model_to_optimizer_map[index(x)], model.moi_backend.model_to_optimizer_map[index(y)]])
+evaluator = JuMP.MOI.Nonlinear.Evaluator(model.moi_backend.optimizer.model.nlp_model, JuMP.MOI.Nonlinear.SparseReverseMode(), 
+    [   model.moi_backend.model_to_optimizer_map[index(x)], 
+        model.moi_backend.model_to_optimizer_map[index(y)], 
+        model.moi_backend.model_to_optimizer_map[index(p)],
+        model.moi_backend.model_to_optimizer_map[index(p2)],
+    ]
+)
 
 # Define what we will need to evaluate
 MOI.initialize(evaluator, [:Grad, :Jac, :Hess, :JacVec])
