@@ -145,6 +145,7 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     # Function Derivatives
     hessian, jacobian = compute_optimal_hess_jac(evaluator, cons, all_vars)
 
+    # TODO: Add appropriate entries for the slack variables: Zeros for the hessian and Identity for the jacobian
     # Hessian of the lagrangian wrt the primal variables
     W = hessian[1:num_vars, 1:num_vars]
     # Jacobian of the constraints wrt the primal variables
