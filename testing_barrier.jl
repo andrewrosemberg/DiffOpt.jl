@@ -9,30 +9,32 @@ using Ipopt
 # using MadNLP
 # using KNITRO
 
+include("jump_copy.jl")
+
 ############
 # Test Case
 ############
 
 # Define the problem
-model = Model(Ipopt.Optimizer)
+par_model = Model(Ipopt.Optimizer)
 
 # Parameters
-@variable(model, p ∈ MOI.Parameter(1.0))
-@variable(model, p2 ∈ MOI.Parameter(2.0))
+@variable(par_model, p ∈ MOI.Parameter(1.0))
+@variable(par_model, p2 ∈ MOI.Parameter(2.0))
 
 # Variables
-@variable(model, x) 
-@variable(model, y)
+@variable(par_model, x) 
+@variable(par_model, y)
 
 # Constraints
-@constraint(model, con1, y >= p*sin(x)) # NLP Constraint
-@constraint(model, con2, x + y == p)
-@constraint(model, con3, p2 * x >= 0.1)
-@objective(model, Min, (1 - x)^2 + 100 * (y - x^2)^2) # NLP Objective
-optimize!(model)
+@constraint(par_model, con1, y >= p*sin(x)) # NLP Constraint
+@constraint(par_model, con2, x + y == p)
+@constraint(par_model, con3, p2 * x >= 0.1)
+@objective(par_model, Min, (1 - x)^2 + 100 * (y - x^2)^2) # NLP Objective
+optimize!(par_model)
 
 # Check local optimality
-termination_status(model)
+termination_status(par_model)
 
 ############
 # Retrieve important quantities
@@ -61,12 +63,15 @@ dual_values = dual.([con1; con2; con3])
 num_vars = length(primal_values)
 num_cons = length(dual_values)
 
+# create copy with no parameters
+model, var_src_to_dest, cons_to_cons = copy_jump_no_parameters(par_model)
+
 # `Evaluator`: Object that helps evaluating functions and calculating related values (Hessian, Jacobian, ...)
-evaluator = JuMP.MOI.Nonlinear.Evaluator(model.moi_backend.optimizer.model.nlp_model, JuMP.MOI.Nonlinear.SparseReverseMode(), 
-    [   model.moi_backend.model_to_optimizer_map[index(x)], 
-        model.moi_backend.model_to_optimizer_map[index(y)], 
-        model.moi_backend.model_to_optimizer_map[index(p)],
-        model.moi_backend.model_to_optimizer_map[index(p2)],
+evaluator = JuMP.MOI.Nonlinear.Evaluator(nonlinear_model(model; force=true), JuMP.MOI.Nonlinear.SparseReverseMode(), 
+    [   index(var_src_to_dest[x]), 
+        index(var_src_to_dest[y]), 
+        index(var_src_to_dest[p]),
+        index(var_src_to_dest[p2]),
     ]
 )
 
@@ -77,7 +82,7 @@ MOI.initialize(evaluator, [:Grad, :Jac, :Hess, :JacVec])
 hessian_sparsity = MOI.hessian_lagrangian_structure(evaluator)
 W = fill(NaN, length(hessian_sparsity))
 
-# Modify H with the values for the hessian of the lagrangian
+# Modify W with the values for the hessian of the lagrangian
 MOI.eval_hessian_lagrangian(evaluator, W, primal_values, 1.0, dual_values)
 W = _dense_hessian(hessian_sparsity, W, num_vars)
 
