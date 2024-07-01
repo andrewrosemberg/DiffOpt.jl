@@ -12,7 +12,7 @@ using Ipopt
 include("nlp_utilities.jl")
 
 ############
-# Test Case
+# Test Case 1
 ############
 
 # Define the problem
