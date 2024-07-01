@@ -44,6 +44,7 @@ termination_status(par_model)
 primal_vars = [x; y]
 num_vars = length(primal_vars)
 params = [p; p2]
+num_parms = length(params)
 all_vars = [primal_vars; params]
 
 hessian, jacobian, nlp, cons = compute_optimal_hess_jac(par_model; x=all_vars)
@@ -57,14 +58,24 @@ A = jacobian[:, 1:num_vars]
 ∇ₚC = jacobian[:, num_vars+1:end]
 
 ############
-# (WORK IN PROGRESS) - Non working code
-
 # Calculate Sensitivity
 ############
 num_cons = length(cons)
-V = diagm(dual.(LowerBoundRef.(primal_vars))) # dual of the bounds
 X = diagm(value.(primal_vars))
 
+# dual of the bounds
+bound_duals = zeros(length(primal_vars))
+for i in 1:length(primal_vars)
+    if has_lower_bound(primal_vars[i])
+        bound_duals[i] = dual.(LowerBoundRef(primal_vars[i]))
+    end
+    if has_upper_bound(primal_vars[i])
+        bound_duals[i] -= dual.(UpperBoundRef(primal_vars[i]))
+    end
+end
+V = diagm(bound_duals)
+
+# M matrix
 M = zeros(num_vars * 2 + num_cons, num_vars * 2 + num_cons)
 
 # M = [
@@ -76,9 +87,11 @@ M = zeros(num_vars * 2 + num_cons, num_vars * 2 + num_cons)
 M[1:num_vars, 1:num_vars] = W
 M[1:num_vars, num_vars+1:num_vars+num_cons] = A'
 M[num_vars+1:num_vars+num_cons, 1:num_vars] = A
+M[1:num_vars, num_vars+num_cons+1:end] = -I(num_vars)
 M[num_vars+num_cons+1:end, 1:num_vars] = V
+M[num_vars+num_cons+1:end, num_vars+num_cons+1:end] = X
 
-N = [∇ₓₚL ; ∇ₚC]
+N = [∇ₓₚL ; ∇ₚC; zeros(num_vars, num_parms)]
 
 # sesitivity of the solution (primal-dual) with respect to the parameter
-∂s = inv(M) * N
+∂s = pinv(M) * N
