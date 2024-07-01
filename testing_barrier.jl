@@ -9,7 +9,7 @@ using Ipopt
 # using MadNLP
 # using KNITRO
 
-include("jump_copy.jl")
+include("nlp_utilities.jl")
 
 ############
 # Test Case
@@ -40,76 +40,43 @@ termination_status(par_model)
 # Retrieve important quantities
 ############
 
-function _dense_hessian(hessian_sparsity, V, n)
-    I = [i for (i, _) in hessian_sparsity]
-    J = [j for (_, j) in hessian_sparsity]
-    raw = SparseArrays.sparse(I, J, V, n, n)
-    return Matrix(
-        raw + raw' -
-        SparseArrays.sparse(LinearAlgebra.diagm(0 => LinearAlgebra.diag(raw))),
-    )
-end
+# Primal variables
+primal_vars = [x; y]
+num_vars = length(primal_vars)
+params = [p; p2]
+all_vars = [primal_vars; params]
 
-function _dense_jacobian(jacobian_sparsity, V, m, n)
-    I = [i for (i, j) in jacobian_sparsity]
-    J = [j for (i, j) in jacobian_sparsity]
-    raw = SparseArrays.sparse(I, J, V, m, n)
-    return Matrix(raw)
-end
+hessian, jacobian, nlp, cons = compute_optimal_hess_jac(par_model; x=all_vars)
 
-# Primal Solution
-primal_values = value.([x, y, p, p2])
-dual_values = dual.([con1; con2; con3])
-num_vars = length(primal_values)
-num_cons = length(dual_values)
+W = hessian[1:num_vars, 1:num_vars]
+A = jacobian[:, 1:num_vars]
 
-# create copy with no parameters
-model, var_src_to_dest, cons_to_cons = copy_jump_no_parameters(par_model)
-
-# `Evaluator`: Object that helps evaluating functions and calculating related values (Hessian, Jacobian, ...)
-evaluator = JuMP.MOI.Nonlinear.Evaluator(nonlinear_model(model; force=true), JuMP.MOI.Nonlinear.SparseReverseMode(), 
-    [   index(var_src_to_dest[x]), 
-        index(var_src_to_dest[y]), 
-        index(var_src_to_dest[p]),
-        index(var_src_to_dest[p2]),
-    ]
-)
-
-# Define what we will need to evaluate
-MOI.initialize(evaluator, [:Grad, :Jac, :Hess, :JacVec])
-
-# Hessian "Symetric" structure values - Placeholder that will be modified to during the evaluation of the hessian
-hessian_sparsity = MOI.hessian_lagrangian_structure(evaluator)
-W = fill(NaN, length(hessian_sparsity))
-
-# Modify W with the values for the hessian of the lagrangian
-MOI.eval_hessian_lagrangian(evaluator, W, primal_values, 1.0, dual_values)
-W = _dense_hessian(hessian_sparsity, W, num_vars)
-
-# Jacobian of the constraints Placeholder
-jacobian_sparsity = MOI.jacobian_structure(evaluator)
-A = zeros(length(jacobian_sparsity))
-
-# Evaluate Jacobian
-MOI.eval_constraint_jacobian(evaluator, A, primal_values)
-A = _dense_jacobian(jacobian_sparsity, A, num_cons, num_vars)
-
-# TODO: ∇ₓₚL (Partial second derivative of the lagrangian wrt primal solution and parameters) ; 
-# TODO: ∇ₚC (partial derivative of the equality constraintswith wrt parameters).
+# ∇ₓₚL (Partial second derivative of the lagrangian wrt primal solution and parameters)
+∇ₓₚL = hessian[num_vars+1:end, 1:num_vars]
+# ∇ₚC (partial derivative of the equality constraintswith wrt parameters).
+∇ₚC = jacobian[:, num_vars+1:end]
 
 ############
 # (WORK IN PROGRESS) - Non working code
 
 # Calculate Sensitivity
 ############
-V = diagm(dual_values)
-X = diagm(primal_values)
+num_cons = length(cons)
+V = diagm(dual.(LowerBoundRef.(primal_vars))) # dual of the bounds
+X = diagm(value.(primal_vars))
 
-M = [
-    [W A -I];
-    [A' 0 0];
-    [V 0 X]
-]
+M = zeros(num_vars * 2 + num_cons, num_vars * 2 + num_cons)
+
+# M = [
+#     [W A' -I];
+#     [A 0 0];
+#     [V 0 X]
+# ]
+
+M[1:num_vars, 1:num_vars] = W
+M[1:num_vars, num_vars+1:num_vars+num_cons] = A'
+M[num_vars+1:num_vars+num_cons, 1:num_vars] = A
+M[num_vars+num_cons+1:end, 1:num_vars] = V
 
 N = [∇ₓₚL ; ∇ₚC]
 
