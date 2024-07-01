@@ -32,16 +32,7 @@ function fill_off_diagonal(H)
     return ret
 end
 
-function compute_optimal_hessian(model::Model; nlp=nothing, rows=nothing, x=nothing, evaluator=nothing, backend=nothing
-)
-    if isnothing(nlp)
-        nlp, rows = create_nlp_model(model)
-        x=all_variables(model), 
-        backend=MOI.Nonlinear.SparseReverseMode()
-        evaluator = MOI.Nonlinear.Evaluator(nlp, backend, index.(x))
-        MOI.initialize(evaluator, [:Hess])
-    end
-
+function compute_optimal_hessian(evaluator, rows, x)
     hessian_sparsity = MOI.hessian_lagrangian_structure(evaluator)
     I = [i for (i, _) in hessian_sparsity]
     J = [j for (_, j) in hessian_sparsity]
@@ -51,15 +42,7 @@ function compute_optimal_hessian(model::Model; nlp=nothing, rows=nothing, x=noth
     return Matrix(fill_off_diagonal(H))
 end
 
-function compute_optimal_jacobian(model::Model; nlp=nothing, rows=nothing, x=nothing, evaluator=nothing, backend=nothing
-)
-    if isnothing(nlp)
-        nlp, rows = create_nlp_model(model)
-        x=all_variables(model), 
-        backend=MOI.Nonlinear.SparseReverseMode()
-        evaluator = MOI.Nonlinear.Evaluator(nlp, backend, index.(x))
-        MOI.initialize(evaluator, [:Jac])
-    end
+function compute_optimal_jacobian(evaluator, rows, x)
     jacobian_sparsity = MOI.jacobian_structure(evaluator)
     I = [i for (i, _) in jacobian_sparsity]
     J = [j for (_, j) in jacobian_sparsity]
@@ -69,16 +52,83 @@ function compute_optimal_jacobian(model::Model; nlp=nothing, rows=nothing, x=not
     return Matrix(A)
 end
 
-function compute_optimal_hess_jac(model::Model; nlp_rows=create_nlp_model(model), x=all_variables(model), 
-    backend=MOI.Nonlinear.SparseReverseMode(), 
-    evaluator = MOI.Nonlinear.Evaluator(nlp_rows[1], backend, index.(x))
-)
-    MOI.initialize(evaluator, [:Hess, :Jac])
-    hessian = compute_optimal_hessian(model, nlp=nlp_rows[1], rows=nlp_rows[2], x=x, backend=backend, evaluator=evaluator)
-    jacobian = compute_optimal_jacobian(model, nlp=nlp_rows[1], rows=nlp_rows[2], x=x, backend=backend, evaluator=evaluator)
+function compute_optimal_hess_jac(evaluator, rows, x)
+    hessian = compute_optimal_hessian(evaluator, rows, x)
+    jacobian = compute_optimal_jacobian(evaluator, rows, x)
     
-    return hessian, jacobian, nlp_rows[1], nlp_rows[2]
+    return hessian, jacobian
 end
 
+all_primal_vars(model::Model) = filter(x -> !is_parameter(x), all_variables(model))
+all_params(model::Model) = filter(x -> is_parameter(x), all_variables(model))
 
+function create_evaluator(model::Model; x=all_variables(model))
+    nlp, rows = create_nlp_model(model)
+    backend = MOI.Nonlinear.SparseReverseMode()
+    evaluator = MOI.Nonlinear.Evaluator(nlp, backend, index.(x))
+    MOI.initialize(evaluator, [:Hess, :Jac])
+    return evaluator, rows
+end
 
+function compute_derivatives(evaluator, cons; primal_vars=all_primal_vars(model), params=all_params(model)
+)
+    # Setting
+    num_vars = length(primal_vars)
+    num_parms = length(params)
+    num_cons = length(cons)
+    all_vars = [primal_vars; params]
+
+    # Primal solution
+    X = diagm(value.(primal_vars))
+
+    # Dual of the bounds
+    bound_duals = zeros(length(primal_vars))
+    for i in 1:length(primal_vars)
+        if has_lower_bound(primal_vars[i])
+            bound_duals[i] = dual.(LowerBoundRef(primal_vars[i]))
+        end
+        if has_upper_bound(primal_vars[i])
+            bound_duals[i] -= dual.(UpperBoundRef(primal_vars[i]))
+        end
+    end
+    V = diagm(bound_duals)
+
+    # Function Derivatives
+    hessian, jacobian = compute_optimal_hess_jac(evaluator, cons, all_vars)
+
+    # Hessian of the lagrangian wrt the primal variables
+    W = hessian[1:num_vars, 1:num_vars]
+    # Jacobian of the constraints wrt the primal variables
+    A = jacobian[:, 1:num_vars]
+    # Partial second derivative of the lagrangian wrt primal solution and parameters
+    ∇ₓₚL = hessian[num_vars+1:end, 1:num_vars]
+    # Partial derivative of the equality constraintswith wrt parameters
+    ∇ₚC = jacobian[:, num_vars+1:end]
+
+    # M matrix
+    M = zeros(num_vars * 2 + num_cons, num_vars * 2 + num_cons)
+
+    # M = [
+    #     [W A' -I];
+    #     [A 0 0];
+    #     [V 0 X]
+    # ]
+
+    M[1:num_vars, 1:num_vars] = W
+    M[1:num_vars, num_vars+1:num_vars+num_cons] = A'
+    M[num_vars+1:num_vars+num_cons, 1:num_vars] = A
+    M[1:num_vars, num_vars+num_cons+1:end] = -I(num_vars)
+    M[num_vars+num_cons+1:end, 1:num_vars] = V
+    M[num_vars+num_cons+1:end, num_vars+num_cons+1:end] = X
+
+    # N matrix
+    N = [∇ₓₚL ; ∇ₚC; zeros(num_vars, num_parms)]
+
+    # sesitivity of the solution (primal-dual_constraints-dual_bounds) with respect to the parameters
+    return pinv(M) * N
+end
+
+function compute_derivatives(model::Model; primal_vars=all_primal_vars(model), params=all_params(model))
+    evaluator, rows = create_evaluator(model)
+    return compute_derivatives(evaluator, rows; primal_vars=primal_vars, params=params), evaluator, rows
+end
