@@ -93,5 +93,5 @@ M[num_vars+num_cons+1:end, num_vars+num_cons+1:end] = X
 
 N = [∇ₓₚL ; ∇ₚC; zeros(num_vars, num_parms)]
 
-# sesitivity of the solution (primal-dual) with respect to the parameter
+# sesitivity of the solution (primal-dual_constraints-dual_bounds) with respect to the parameters
 ∂s = pinv(M) * N
