@@ -1,6 +1,11 @@
 using JuMP.MOI
 using SparseArrays
 
+"""
+    create_nlp_model(model::JuMP.Model)
+
+Create a Nonlinear Programming (NLP) model from a JuMP model.
+"""
 function create_nlp_model(model::JuMP.Model)
     rows = Any[]
     nlp = MOI.Nonlinear.Model()
@@ -18,6 +23,11 @@ function create_nlp_model(model::JuMP.Model)
     return nlp, rows
 end
 
+"""
+    fill_off_diagonal(H)
+
+Filling the off-diagonal elements of a sparse matrix to make it symmetric.
+"""
 function fill_off_diagonal(H)
     ret = H + H'
     row_vals = SparseArrays.rowvals(ret)
@@ -32,7 +42,12 @@ function fill_off_diagonal(H)
     return ret
 end
 
-function compute_optimal_hessian(evaluator, rows, x)
+"""
+    compute_optimal_hessian(evaluator::MOI.Nonlinear.Evaluator, rows::Vector{ConstraintRef}, x::Vector{VariableRef})
+
+Compute the optimal Hessian of the Lagrangian.
+"""
+function compute_optimal_hessian(evaluator::MOI.Nonlinear.Evaluator, rows::Vector{ConstraintRef}, x::Vector{VariableRef})
     hessian_sparsity = MOI.hessian_lagrangian_structure(evaluator)
     I = [i for (i, _) in hessian_sparsity]
     J = [j for (_, j) in hessian_sparsity]
@@ -42,7 +57,12 @@ function compute_optimal_hessian(evaluator, rows, x)
     return Matrix(fill_off_diagonal(H))
 end
 
-function compute_optimal_jacobian(evaluator, rows, x)
+"""
+    compute_optimal_jacobian(evaluator::MOI.Nonlinear.Evaluator, rows::Vector{ConstraintRef}, x::Vector{VariableRef})
+
+Compute the optimal Jacobian of the constraints.
+"""
+function compute_optimal_jacobian(evaluator::MOI.Nonlinear.Evaluator, rows::Vector{ConstraintRef}, x::Vector{VariableRef})
     jacobian_sparsity = MOI.jacobian_structure(evaluator)
     I = [i for (i, _) in jacobian_sparsity]
     J = [j for (_, j) in jacobian_sparsity]
@@ -52,16 +72,37 @@ function compute_optimal_jacobian(evaluator, rows, x)
     return Matrix(A)
 end
 
-function compute_optimal_hess_jac(evaluator, rows, x)
+"""
+    compute_optimal_hess_jac(evaluator::MOI.Nonlinear.Evaluator, rows::Vector{ConstraintRef}, x::Vector{VariableRef})
+
+Compute the optimal Hessian of the Lagrangian and Jacobian of the constraints.
+"""
+function compute_optimal_hess_jac(evaluator::MOI.Nonlinear.Evaluator, rows::Vector{ConstraintRef}, x::Vector{VariableRef})
     hessian = compute_optimal_hessian(evaluator, rows, x)
     jacobian = compute_optimal_jacobian(evaluator, rows, x)
     
     return hessian, jacobian
 end
 
+"""
+    all_primal_vars(model::Model)
+
+Get all the primal variables in the model.
+"""
 all_primal_vars(model::Model) = filter(x -> !is_parameter(x), all_variables(model))
+
+"""
+    all_params(model::Model)
+
+Get all the parameters in the model.
+"""
 all_params(model::Model) = filter(x -> is_parameter(x), all_variables(model))
 
+"""
+    create_evaluator(model::Model; x=all_variables(model))
+
+Create an evaluator for the model.
+"""
 function create_evaluator(model::Model; x=all_variables(model))
     nlp, rows = create_nlp_model(model)
     backend = MOI.Nonlinear.SparseReverseMode()
@@ -70,8 +111,16 @@ function create_evaluator(model::Model; x=all_variables(model))
     return evaluator, rows
 end
 
-function compute_derivatives(evaluator, cons; primal_vars=all_primal_vars(model), params=all_params(model)
+"""
+    compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}; primal_vars::Vector{VariableRef}=all_primal_vars(model), params::Vector{VariableRef}=all_params(model))
+
+Compute the derivatives of the solution with respect to the parameters.
+"""
+function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}; 
+    primal_vars::Vector{VariableRef}=all_primal_vars(model), params::Vector{VariableRef}=all_params(model)
 )
+    @assert all(x -> is_parameter(x), params) "All parameters must be parameters"
+
     # Setting
     num_vars = length(primal_vars)
     num_parms = length(params)
@@ -128,6 +177,11 @@ function compute_derivatives(evaluator, cons; primal_vars=all_primal_vars(model)
     return pinv(M) * N
 end
 
+"""
+    compute_derivatives(model::Model; primal_vars=all_primal_vars(model), params=all_params(model))
+
+Compute the derivatives of the solution with respect to the parameters.
+"""
 function compute_derivatives(model::Model; primal_vars=all_primal_vars(model), params=all_params(model))
     evaluator, rows = create_evaluator(model)
     return compute_derivatives(evaluator, rows; primal_vars=primal_vars, params=params), evaluator, rows
