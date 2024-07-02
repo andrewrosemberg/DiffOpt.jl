@@ -117,7 +117,7 @@ end
 Check if the constraint is an inequality.
 """
 function is_inequality(con::ConstraintRef)
-    set_type = MOI.get(owner_model(con), MOI.ConstraintSet(), con)
+    set_type = typeof(MOI.get(owner_model(con), MOI.ConstraintSet(), con))
     return set_type <: MOI.LessThan || set_type <: MOI.GreaterThan
 end
 
@@ -130,10 +130,10 @@ function find_inequealities(cons::Vector{ConstraintRef})
     ineq_locations = zeros(length(cons))
     for i in 1:length(cons)
         if is_inequality(cons[i])
-            ineq_locations[i] = 1
+            ineq_locations[i] = true
         end
     end
-    return findall(ineq_locations)
+    return findall(x -> x ==1, ineq_locations)
 end
 
 """
@@ -196,13 +196,14 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
         A[j, num_vars+i] = 1
     end
     # Partial second derivative of the lagrangian wrt primal solution and parameters
-    ∇ₓₚL = zeros(num_params, num_vars + num_ineq)
+    # TODO Fix dimensions
+    ∇ₓₚL = zeros(num_parms, num_vars + num_ineq)
     ∇ₓₚL[:, 1:num_vars] = hessian[num_vars+1:end, 1:num_vars]
     # Partial derivative of the equality constraintswith wrt parameters
     ∇ₚC = jacobian[:, num_vars+1:end]
 
     # M matrix
-    M = zeros(2 * (num_vars, num_ineq) + num_cons, 2 * (num_vars, num_ineq) + num_cons)
+    M = zeros(2 * (num_vars + num_ineq) + num_cons, 2 * (num_vars + num_ineq) + num_cons)
 
     # M = [
     #     [W A' -I];

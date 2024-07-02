@@ -1,11 +1,16 @@
 using JuMP
 using Ipopt
 using Test
+"""
+    create_nonlinear_jump_model()
 
+Create a nonlinear jump model from the example in:
+JuMP Tutorial for Querying Hessians:
+https://github.com/jump-dev/JuMP.jl/blob/301d46e81cb66c74c6e22cd89fb89ced740f157b/docs/src/tutorials/nonlinear/querying_hessians.jl#L67-L72
+"""
 function create_nonlinear_jump_model()
     model = Model(Ipopt.Optimizer)
     set_silent(model)
-    # Parameters
     @variable(model, p ∈ MOI.Parameter(1.0))
     @variable(model, p2 ∈ MOI.Parameter(2.0))
     @variable(model, p3 ∈ MOI.Parameter(100.0))
@@ -79,11 +84,38 @@ function test_compute_optimal_hess_jacobian()
     end
 end
 
-# TODO: Test derivatives
+################################################
+
+function create_nonlinear_jump_model_sipopt()
+    model = Model(Ipopt.Optimizer)
+    set_silent(model)
+    @variable(model, p1 ∈ MOI.Parameter(4.5))
+    @variable(model, p2 ∈ MOI.Parameter(1.0))
+    @variable(model, x[i = 1:3] >= 0, start = -i)
+    @constraint(model, g_1, 6 * x[1] + 3 * x[2] + 2 * x[3] - p1 == 0)
+    @constraint(model, g_2, p2 * x[1] + x[2] - x[3] - 1 == 0)
+    @objective(model, Min, x[1]^2 + x[2]^2 + x[3]^2)
+    return model, x, [g_1; g_2], [p1; p2]
+end
 
 function test_compute_derivatives()
-    model, x = create_nonlinear_jump_model()
-    optimize!(model)
-    @assert is_solved_and_feasible(model)
-
+    @testset "Compute Derivatives" begin
+        # Model
+        model, x, cons, params = create_nonlinear_jump_model_sipopt()
+        optimize!(model)
+        @assert is_solved_and_feasible(model)
+        # Analytical solutions case b
+        pb = [4.5, 1.0]
+        s_pb = [0.5, 0.5, 0.0]
+        @assert all(isapprox(value.(x), s_pb; atol = 1e-6))
+        # Analytical solutions case a
+        pa = [5.0, 1.0]
+        s_pa = [0.6327, 0.3878, 0.0204]
+        set_parameter_value.(params, pa)
+        optimize!(model)
+        @assert is_solved_and_feasible(model)
+        @assert all(isapprox(value.(x), s_pa; atol = 1e-4))
+        # Compute derivatives
+        ∂s, evaluator, rows = compute_derivatives(model)
+    end
 end
