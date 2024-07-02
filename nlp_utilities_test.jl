@@ -16,14 +16,32 @@ function create_nonlinear_jump_model()
     return model, x, [g_1; g_2], [p; p2; p3]
 end
 
-function analytic_hessian(x, σ, μ)
+function analytic_hessian(x, σ, μ, p)
     g_1_H = [2.0 0.0; 0.0 0.0]
-    g_2_H = [2.0 2.0; 2.0 2.0]
+    g_2_H = p[1] * [2.0 2.0; 2.0 2.0]
     f_H = zeros(2, 2)
-    f_H[1, 1] = 2.0 + 1200.0 * x[1]^2 - 400.0 * x[2]
-    f_H[1, 2] = f_H[2, 1] = -400.0 * x[1]
-    f_H[2, 2] = 200.0
+    f_H[1, 1] = 2.0 + p[3] * 12.0 * x[1]^2 - p[3] * 4.0 * x[2]
+    f_H[1, 2] = f_H[2, 1] = -p[3] * 4.0 * x[1]
+    f_H[2, 2] = p[3] * 2.0
     return σ * f_H + μ' * [g_1_H, g_2_H]
+end
+
+function analytic_jacobian(x, p)
+    g_1_J = [   
+        2.0 * x[1], # ∂g_1/∂x_1
+        0.0,       # ∂g_1/∂x_2
+        -1.0,      # ∂g_1/∂p_1 
+        0.0,      # ∂g_1/∂p_2
+        0.0      # ∂g_1/∂p_3
+    ]
+    g_2_J = [
+        p[1] * 2.0 * (x[1] + x[2]), # ∂g_2/∂x_1
+        2.0 * (x[1] + x[2]),        # ∂g_2/∂x_2
+        (x[1] + x[2])^2,            # ∂g_2/∂p_1
+        -1.0,                        # ∂g_2/∂p_2
+        0.0                         # ∂g_2/∂p_3
+    ]
+    return hcat(g_2_J, g_1_J)'[:,:]
 end
 
 function test_create_evaluator(model, x)
@@ -43,18 +61,21 @@ function test_compute_optimal_hess_jacobian()
     @testset "Compute Optimal Hessian and Jacobian" begin
         # Model
         model, x, cons, params = create_nonlinear_jump_model()
-        num_var = length(x)
-        test_create_evaluator(model, x)
-        evaluator, rows = create_evaluator(model; x = [x; params])
         # Optimize
         optimize!(model)
         @assert is_solved_and_feasible(model)
+        # Create evaluator
+        test_create_evaluator(model, [x; params])
+        evaluator, rows = create_evaluator(model; x = [x; params])
         # Compute Hessian and Jacobian
+        num_var = length(x)
         full_hessian, full_jacobian = compute_optimal_hess_jac(evaluator, rows, [x; params])
         hessian = full_hessian[1:num_var, 1:num_var]
         # Check Hessian
-        @test hessian .≈ analytic_hessian(value.(x), 1.0, dual.(cons))
-        # TODO: Check Jacobian
+        @test all(hessian .≈ analytic_hessian(value.(x), 1.0, dual.(cons), value.(params)))
+        # TODO: Test hessial of parameters
+        # Check Jacobian
+        @test all(full_jacobian .≈ analytic_jacobian(value.(x), value.(params)))
     end
 end
 
