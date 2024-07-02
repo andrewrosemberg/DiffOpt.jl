@@ -10,6 +10,7 @@ using Ipopt
 # using KNITRO
 
 include("nlp_utilities.jl")
+include("nlp_utilities_test.jl")
 
 ############
 # Test Case 1
@@ -41,3 +42,6 @@ termination_status(par_model)
 ############
 
 ∂s, evaluator, rows = compute_derivatives(par_model)
+
+
+test_compute_optimal_hess_jacobian()

@@ -7,7 +7,7 @@ using SparseArrays
 Create a Nonlinear Programming (NLP) model from a JuMP model.
 """
 function create_nlp_model(model::JuMP.Model)
-    rows = Any[]
+    rows = Vector{ConstraintRef}(undef, 0)
     nlp = MOI.Nonlinear.Model()
     for (F, S) in list_of_constraint_types(model)
         if F <: VariableRef
@@ -230,6 +230,6 @@ end
 Compute the derivatives of the solution with respect to the parameters.
 """
 function compute_derivatives(model::Model; primal_vars=all_primal_vars(model), params=all_params(model))
-    evaluator, rows = create_evaluator(model)
+    evaluator, rows = create_evaluator(model; x=[primal_vars; params])
     return compute_derivatives(evaluator, rows; primal_vars=primal_vars, params=params), evaluator, rows
 end
