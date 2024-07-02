@@ -111,13 +111,33 @@ function create_evaluator(model::Model; x=all_variables(model))
     return evaluator, rows
 end
 
+function is_inequality(con::ConstraintRef)
+    set_type = MOI.get(owner_model(con), MOI.ConstraintSet(), con)
+    return set_type <: MOI.LessThan || set_type <: MOI.GreaterThan
+end
+
+function find_inequealities(cons::Vector{ConstraintRef})
+    ineq_locations = zeros(length(cons))
+    for i in 1:length(cons)
+        if is_inequality(cons[i])
+            ineq_locations[i] = 1
+        end
+    end
+    return findall(ineq_locations)
+end
+
+function get_slack_inequality(con::ConstraintRef)
+    slack = MOI.get(owner_model(con), CanonicalConstraintFunction(), con)
+    return slack
+end
+
 """
     compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}; primal_vars::Vector{VariableRef}=all_primal_vars(model), params::Vector{VariableRef}=all_params(model))
 
 Compute the derivatives of the solution with respect to the parameters.
 """
 function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}; 
-    primal_vars::Vector{VariableRef}=all_primal_vars(model), params::Vector{VariableRef}=all_params(model)
+    primal_vars::Vector{VariableRef}, params::Vector{VariableRef}
 )
     @assert all(x -> is_parameter(x), params) "All parameters must be parameters"
 
@@ -125,20 +145,26 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     num_vars = length(primal_vars)
     num_parms = length(params)
     num_cons = length(cons)
+    ineq_locations = find_inequealities(cons)
+    num_ineq = length(ineq_locations)
+    slack_vars = [get_slack_inequality(cons[i]) for i in ineq_locations]
     all_vars = [primal_vars; params]
 
     # Primal solution
-    X = diagm(value.(primal_vars))
+    X = diagm(value.([primal_vars; slack_vars]))
 
     # Dual of the bounds
-    bound_duals = zeros(length(primal_vars))
-    for i in 1:length(primal_vars)
+    bound_duals = zeros(num_vars+num_ineq)
+    for i in 1:num_vars
         if has_lower_bound(primal_vars[i])
             bound_duals[i] = dual.(LowerBoundRef(primal_vars[i]))
         end
         if has_upper_bound(primal_vars[i])
             bound_duals[i] -= dual.(UpperBoundRef(primal_vars[i]))
         end
+    end
+    for (i, con) in enumerate(cons[ineq_locations])
+        bound_duals[num_vars+i] = dual.(con)
     end
     V = diagm(bound_duals)
 
@@ -147,16 +173,22 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
 
     # TODO: Add appropriate entries for the slack variables: Zeros for the hessian and Identity for the jacobian
     # Hessian of the lagrangian wrt the primal variables
-    W = hessian[1:num_vars, 1:num_vars]
+    W = zeros(num_vars + num_ineq, num_vars + num_ineq)
+    W[1:num_vars, 1:num_vars] = hessian[1:num_vars, 1:num_vars]
     # Jacobian of the constraints wrt the primal variables
-    A = jacobian[:, 1:num_vars]
+    A = zeros(num_cons, num_vars + num_ineq)
+    A[:, 1:num_vars] = jacobian[:, 1:num_vars]
+    for (i,j) in enumerate(ineq_locations)
+        A[j, num_vars+i] = 1
+    end
     # Partial second derivative of the lagrangian wrt primal solution and parameters
-    ∇ₓₚL = hessian[num_vars+1:end, 1:num_vars]
+    ∇ₓₚL = zeros(num_params, num_vars + num_ineq)
+    ∇ₓₚL[:, 1:num_vars] = hessian[num_vars+1:end, 1:num_vars]
     # Partial derivative of the equality constraintswith wrt parameters
     ∇ₚC = jacobian[:, num_vars+1:end]
 
     # M matrix
-    M = zeros(num_vars * 2 + num_cons, num_vars * 2 + num_cons)
+    M = zeros(2 * (num_vars, num_ineq) + num_cons, 2 * (num_vars, num_ineq) + num_cons)
 
     # M = [
     #     [W A' -I];
@@ -164,15 +196,15 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     #     [V 0 X]
     # ]
 
-    M[1:num_vars, 1:num_vars] = W
-    M[1:num_vars, num_vars+1:num_vars+num_cons] = A'
-    M[num_vars+1:num_vars+num_cons, 1:num_vars] = A
-    M[1:num_vars, num_vars+num_cons+1:end] = -I(num_vars)
-    M[num_vars+num_cons+1:end, 1:num_vars] = V
-    M[num_vars+num_cons+1:end, num_vars+num_cons+1:end] = X
+    M[1:num_vars + num_ineq, 1:num_vars + num_ineq] = W
+    M[1:num_vars + num_ineq, num_vars + num_ineq + 1 : num_vars + num_ineq + num_cons] = A'
+    M[num_vars + num_ineq+1:num_vars + num_ineq+num_cons, 1:num_vars + num_ineq] = A
+    M[1:num_vars + num_ineq, num_vars + num_ineq+num_cons+1:end] = -I(num_vars + num_ineq)
+    M[num_vars + num_ineq+num_cons+1:end, 1:num_vars + num_ineq] = V
+    M[num_vars + num_ineq+num_cons+1:end, num_vars + num_ineq+num_cons+1:end] = X
 
     # N matrix
-    N = [∇ₓₚL ; ∇ₚC; zeros(num_vars, num_parms)]
+    N = [∇ₓₚL ; ∇ₚC; zeros(num_vars + num_ineq, num_parms)]
 
     # sesitivity of the solution (primal-dual_constraints-dual_bounds) with respect to the parameters
     return pinv(M) * N
