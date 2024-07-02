@@ -111,11 +111,21 @@ function create_evaluator(model::Model; x=all_variables(model))
     return evaluator, rows
 end
 
+"""
+    is_inequality(con::ConstraintRef)
+
+Check if the constraint is an inequality.
+"""
 function is_inequality(con::ConstraintRef)
     set_type = MOI.get(owner_model(con), MOI.ConstraintSet(), con)
     return set_type <: MOI.LessThan || set_type <: MOI.GreaterThan
 end
 
+"""
+    find_inequealities(cons::Vector{ConstraintRef})
+
+Find the indices of the inequality constraints.
+"""
 function find_inequealities(cons::Vector{ConstraintRef})
     ineq_locations = zeros(length(cons))
     for i in 1:length(cons)
@@ -126,6 +136,11 @@ function find_inequealities(cons::Vector{ConstraintRef})
     return findall(ineq_locations)
 end
 
+"""
+    get_slack_inequality(con::ConstraintRef)
+
+Get the reference to the canonical function that is equivalent to the slack variable of the inequality constraint.
+"""
 function get_slack_inequality(con::ConstraintRef)
     slack = MOI.get(owner_model(con), CanonicalConstraintFunction(), con)
     return slack
@@ -171,7 +186,6 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     # Function Derivatives
     hessian, jacobian = compute_optimal_hess_jac(evaluator, cons, all_vars)
 
-    # TODO: Add appropriate entries for the slack variables: Zeros for the hessian and Identity for the jacobian
     # Hessian of the lagrangian wrt the primal variables
     W = zeros(num_vars + num_ineq, num_vars + num_ineq)
     W[1:num_vars, 1:num_vars] = hessian[1:num_vars, 1:num_vars]
@@ -206,7 +220,7 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     # N matrix
     N = [∇ₓₚL ; ∇ₚC; zeros(num_vars + num_ineq, num_parms)]
 
-    # sesitivity of the solution (primal-dual_constraints-dual_bounds) with respect to the parameters
+    # Sesitivity of the solution (primal-dual_constraints-dual_bounds) with respect to the parameters
     return pinv(M) * N
 end
 
