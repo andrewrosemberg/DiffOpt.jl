@@ -1,5 +1,7 @@
+using JuMP
 using JuMP.MOI
 using SparseArrays
+using LinearAlgebra
 
 """
     create_nlp_model(model::JuMP.Model)
@@ -142,7 +144,7 @@ end
 Get the reference to the canonical function that is equivalent to the slack variable of the inequality constraint.
 """
 function get_slack_inequality(con::ConstraintRef)
-    slack = MOI.get(owner_model(con), CanonicalConstraintFunction(), con)
+    slack = MOI.get(owner_model(con), MOI.CanonicalConstraintFunction(), con)
     return slack
 end
 
@@ -197,8 +199,9 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     end
     # Partial second derivative of the lagrangian wrt primal solution and parameters
     # TODO Fix dimensions
-    ∇ₓₚL = zeros(num_parms, num_vars + num_ineq)
-    ∇ₓₚL[:, 1:num_vars] = hessian[num_vars+1:end, 1:num_vars]
+    #∇ₓₚL = zeros(num_parms, num_vars + num_ineq)
+    ∇ₓₚL = zeros(num_vars + num_ineq, num_parms)
+    ∇ₓₚL[1:num_vars, :] = hessian[1:num_vars, num_vars+1:end]
     # Partial derivative of the equality constraintswith wrt parameters
     ∇ₚC = jacobian[:, num_vars+1:end]
 
