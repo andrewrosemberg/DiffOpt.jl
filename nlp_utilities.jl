@@ -151,7 +151,7 @@ end
 
 Compute the derivatives of the solution with respect to the parameters.
 """
-function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}; 
+function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}; 
     primal_vars::Vector{VariableRef}, params::Vector{VariableRef}
 )
     @assert all(x -> is_parameter(x), params) "All parameters must be parameters"
@@ -197,8 +197,8 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     end
     # Partial second derivative of the lagrangian wrt primal solution and parameters
     # TODO Fix dimensions
-    ∇ₓₚL = zeros(num_parms, num_vars + num_ineq)
-    ∇ₓₚL[:, 1:num_vars] = hessian[num_vars+1:end, 1:num_vars]
+    ∇ₓₚL = zeros(num_vars + num_ineq, num_parms)
+    ∇ₓₚL[1:num_vars, :] = hessian[1:num_vars, num_vars+1:end]
     # Partial derivative of the equality constraintswith wrt parameters
     ∇ₚC = jacobian[:, num_vars+1:end]
 
@@ -222,7 +222,7 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     N = [∇ₓₚL ; ∇ₚC; zeros(num_vars + num_ineq, num_parms)]
 
     # Sesitivity of the solution (primal-dual_constraints-dual_bounds) with respect to the parameters
-    return pinv(M) * N
+    return - M \ N
 end
 
 """
@@ -232,5 +232,5 @@ Compute the derivatives of the solution with respect to the parameters.
 """
 function compute_derivatives(model::Model; primal_vars=all_primal_vars(model), params=all_params(model))
     evaluator, rows = create_evaluator(model; x=[primal_vars; params])
-    return compute_derivatives(evaluator, rows; primal_vars=primal_vars, params=params), evaluator, rows
+    return compute_derivatives_no_relax(evaluator, rows; primal_vars=primal_vars, params=params), evaluator, rows
 end

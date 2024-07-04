@@ -116,6 +116,8 @@ function test_compute_derivatives()
         @assert is_solved_and_feasible(model)
         @assert all(isapprox(value.(x), s_pa; atol = 1e-4))
         # Compute derivatives
-        ∂s, evaluator, rows = compute_derivatives(model)
+        ∂s, evaluator, rows = compute_derivatives(model; primal_vars = x, params = params)
+        # Check linear approx s_pb
+        s_pb_approx = s_pa + ∂s[1:3, :] * (pb - pa)
     end
 end
