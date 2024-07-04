@@ -99,7 +99,7 @@ function create_nonlinear_jump_model_sipopt()
 end
 
 function test_compute_derivatives()
-    @testset "Compute Derivatives" begin
+    @testset "Compute Derivatives No Inequalities" begin
         # Model
         model, x, cons, params = create_nonlinear_jump_model_sipopt()
         optimize!(model)
@@ -119,5 +119,6 @@ function test_compute_derivatives()
         ∂s, evaluator, rows = compute_derivatives(model; primal_vars = x, params = params)
         # Check linear approx s_pb
         s_pb_approx = s_pa + ∂s[1:3, :] * (pb - pa)
+        @test all(isapprox([0.5765; 0.3775; -0.0459], s_pb_approx; atol = 1e-2))
     end
 end
