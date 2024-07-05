@@ -101,7 +101,7 @@ end
 function test_compute_derivatives()
     @testset "Compute Derivatives No Inequalities" begin
         # Model
-        model, x, cons, params = create_nonlinear_jump_model_sipopt()
+        model, primal_vars, cons, params = create_nonlinear_jump_model_sipopt()
         optimize!(model)
         @assert is_solved_and_feasible(model)
         # Analytical solutions case b
@@ -115,10 +115,17 @@ function test_compute_derivatives()
         optimize!(model)
         @assert is_solved_and_feasible(model)
         @assert all(isapprox(value.(x), s_pa; atol = 1e-4))
-        # Compute derivatives
-        ∂s, evaluator, rows = compute_derivatives(model; primal_vars = x, params = params)
+        # Compute derivatives without accounting for active set changes
+        evaluator, rows = create_evaluator(model; x=[primal_vars; params])
+        X, V_L, X_L, V_U, X_U, ineq_locations = compute_solution_and_bounds(primal_vars, rows)
+        ∂s, K, N = compute_derivatives_no_relax(evaluator, rows, primal_vars, params, X, V_L, X_L, V_U, X_U, ineq_locations)
         # Check linear approx s_pb
-        s_pb_approx = s_pa + ∂s[1:3, :] * (pb - pa)
-        @test all(isapprox([0.5765; 0.3775; -0.0459], s_pb_approx; atol = 1e-2))
+        ∂p = pb - pa
+        s_pb_approx_violated = s_pa + ∂s[1:3, :] * ∂p
+        @test all(isapprox([0.5765; 0.3775; -0.0459], s_pb_approx_violated; atol = 1e-2))
+        # Account for active set changes
+        ∂s = compute_derivatives(evaluator, rows, ∂p; primal_vars, params)
+        s_pb_approx = s_pa + ∂s[1:3, :] * ∂p
+        @test all(isapprox(s_pb, s_pb_approx; atol = 1e-2))
     end
 end

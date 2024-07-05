@@ -146,42 +146,67 @@ function get_slack_inequality(con::ConstraintRef)
     return slack
 end
 
+function compute_solution_and_bounds(primal_vars, cons)
+    num_vars = length(primal_vars)
+    ineq_locations = find_inequealities(cons)
+    num_ineq = length(ineq_locations)
+    slack_vars = [get_slack_inequality(cons[i]) for i in ineq_locations]
+
+    # Primal solution
+    X = value.([primal_vars; slack_vars])
+
+    # value and dual of the lower bounds
+    V_L = zeros(num_vars+num_ineq)
+    X_L = zeros(num_vars+num_ineq)
+    for i in 1:num_vars
+        if has_lower_bound(primal_vars[i])
+            V_L[i] = dual.(LowerBoundRef(primal_vars[i]))
+            X_L[i] = JuMP.lower_bound(primal_vars[i])
+        end
+    end
+    for (i, con) in enumerate(cons[ineq_locations])
+        V_L[num_vars+i] = dual.(con)
+    end
+    # value and dual of the upper bounds
+    V_U = zeros(num_vars+num_ineq)
+    X_U = zeros(num_vars+num_ineq)
+    for i in 1:num_vars
+        if has_upper_bound(primal_vars[i])
+            V_U[i] = dual.(UpperBoundRef(primal_vars[i]))
+            X_U[i] = JuMP.upper_bound(primal_vars[i])
+        end
+    end
+
+    return X, V_L, X_L, V_U, X_U, ineq_locations
+end
+
 """
     compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}; primal_vars::Vector{VariableRef}=all_primal_vars(model), params::Vector{VariableRef}=all_params(model))
 
-Compute the derivatives of the solution with respect to the parameters.
+Compute the derivatives of the solution with respect to the parameters without accounting for active set changes.
 """
-function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}; 
-    primal_vars::Vector{VariableRef}, params::Vector{VariableRef}
-)
+function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef},
+    primal_vars::Vector{VariableRef}, params::Vector{VariableRef}, 
+    _X::Vector{T}, _V_L::Vector{T}, _X_L::Vector{T}, _V_U::Vector{T}, _X_U::Vector{T}, ineq_locations::Vector{Z}
+) where {T<:Real, Z<:Integer}
     @assert all(x -> is_parameter(x), params) "All parameters must be parameters"
 
     # Setting
     num_vars = length(primal_vars)
     num_parms = length(params)
     num_cons = length(cons)
-    ineq_locations = find_inequealities(cons)
     num_ineq = length(ineq_locations)
-    slack_vars = [get_slack_inequality(cons[i]) for i in ineq_locations]
     all_vars = [primal_vars; params]
 
     # Primal solution
-    X = diagm(value.([primal_vars; slack_vars]))
+    X = diagm(_X)
 
-    # Dual of the bounds
-    bound_duals = zeros(num_vars+num_ineq)
-    for i in 1:num_vars
-        if has_lower_bound(primal_vars[i])
-            bound_duals[i] = dual.(LowerBoundRef(primal_vars[i]))
-        end
-        if has_upper_bound(primal_vars[i])
-            bound_duals[i] -= dual.(UpperBoundRef(primal_vars[i]))
-        end
-    end
-    for (i, con) in enumerate(cons[ineq_locations])
-        bound_duals[num_vars+i] = dual.(con)
-    end
-    V = diagm(bound_duals)
+    # value and dual of the lower bounds
+    V_L = diagm(_V_L)
+    X_L = diagm(_X_L)
+    # value and dual of the upper bounds
+    V_U = diagm(_V_U)
+    X_U = diagm(_X_U)
 
     # Function Derivatives
     hessian, jacobian = compute_optimal_hess_jac(evaluator, cons, all_vars)
@@ -196,33 +221,47 @@ function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::
         A[j, num_vars+i] = 1
     end
     # Partial second derivative of the lagrangian wrt primal solution and parameters
-    # TODO Fix dimensions
     ∇ₓₚL = zeros(num_vars + num_ineq, num_parms)
     ∇ₓₚL[1:num_vars, :] = hessian[1:num_vars, num_vars+1:end]
     # Partial derivative of the equality constraintswith wrt parameters
     ∇ₚC = jacobian[:, num_vars+1:end]
 
     # M matrix
-    M = zeros(2 * (num_vars + num_ineq) + num_cons, 2 * (num_vars + num_ineq) + num_cons)
-
     # M = [
-    #     [W A' -I];
-    #     [A 0 0];
-    #     [V 0 X]
+    #     [W A' -I I];
+    #     [A 0 0 0];
+    #     [V_L 0 (X - X_L) 0]
+    #     [V_U 0 0 0 (X - X_U)]
     # ]
+    len_w = num_vars + num_ineq
+    M = zeros(3 * len_w + num_cons, 3 * len_w + num_cons)
 
-    M[1:num_vars + num_ineq, 1:num_vars + num_ineq] = W
-    M[1:num_vars + num_ineq, num_vars + num_ineq + 1 : num_vars + num_ineq + num_cons] = A'
-    M[num_vars + num_ineq+1:num_vars + num_ineq+num_cons, 1:num_vars + num_ineq] = A
-    M[1:num_vars + num_ineq, num_vars + num_ineq+num_cons+1:end] = -I(num_vars + num_ineq)
-    M[num_vars + num_ineq+num_cons+1:end, 1:num_vars + num_ineq] = V
-    M[num_vars + num_ineq+num_cons+1:end, num_vars + num_ineq+num_cons+1:end] = X
+    M[1:len_w, 1:len_w] = W
+    M[1:len_w, len_w + 1 : len_w + num_cons] = A'
+    M[len_w+1:len_w+num_cons, 1:len_w] = A
+    M[1:len_w, len_w+num_cons+1:2 * len_w+num_cons] = -I(len_w)
+    M[len_w+num_cons+1:2 * len_w+num_cons, 1:len_w] = V_L
+    M[len_w+num_cons+1:2 * len_w+num_cons, len_w+num_cons+1:2 * len_w+num_cons] = X - X_L
+    M[2 * len_w+num_cons+1:3 * len_w+num_cons, 1:len_w] = V_U
+    M[2 * len_w+num_cons+1:3 * len_w+num_cons, 2 * len_w+num_cons+1:3 * len_w+num_cons] = X - X_U
+    M[1:len_w, 2 * len_w+num_cons+1:end] = I(len_w)
 
     # N matrix
-    N = [∇ₓₚL ; ∇ₚC; zeros(num_vars + num_ineq, num_parms)]
+    N = [∇ₓₚL ; ∇ₚC; zeros(2 * len_w, num_parms)]
 
     # Sesitivity of the solution (primal-dual_constraints-dual_bounds) with respect to the parameters
-    return - M \ N
+    K = qr(M) # Factorization
+    return - (K \ N), K, N
+end
+
+function fix_and_relax(E, K, N, r1, ∂p)
+    rs = N * ∂p
+    # C = −E' inv(K) E
+    C = - E' * (K \ E)
+    # C ∆ν¯ = E' inv(K) rs − r1
+    ∆ν¯ = C \ (E' * (K \ rs) - r1)
+    # K ∆s = − (rs + E∆ν¯)
+    return K \ (- (rs + E * ∆ν¯))
 end
 
 """
@@ -230,7 +269,29 @@ end
 
 Compute the derivatives of the solution with respect to the parameters.
 """
-function compute_derivatives(model::Model; primal_vars=all_primal_vars(model), params=all_params(model))
-    evaluator, rows = create_evaluator(model; x=[primal_vars; params])
-    return compute_derivatives_no_relax(evaluator, rows; primal_vars=primal_vars, params=params), evaluator, rows
+function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}, 
+    ∂p::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model), tol=1e-6
+) where {T<:Real}
+    num_cons = length(cons)
+    # Solution and bounds
+    X, V_L, X_L, V_U, X_U, ineq_locations = compute_solution_and_bounds(primal_vars, cons)
+    num_w = length(ineq_locations) + length(primal_vars)
+    # Compute derivatives
+    ∂s, K, N = compute_derivatives_no_relax(evaluator, cons, primal_vars, params, X, V_L, X_L, V_U, X_U, ineq_locations)
+    # Linearly appoximated solution
+    sp = [X; dual.(cons); V_L; V_U] .+ ∂s * ∂p
+    # One-hot vector that signals the bounds that are violated 
+    # [X_L<= X <= X_U, dual ∈ R, 0 <= V]
+    E = [1.0 * (sp[1:num_w] .> X_U .+ tol) + 1.0 * (sp[1:num_w] .< X_L  .+ tol); zeros(num_cons); sp[num_w+num_cons+1:end] .> 0.0  .+ tol]
+    # optimal solution at the violated bounds
+    r1 = E .* [X; zeros(num_cons); V_L; V_U]
+    if sum(E) > 0
+        return fix_and_relax(E, K, N, r1, ∂p), evaluator, cons
+    end
+    return ∂s
+end
+
+function compute_derivatives(model::Model, ∂p::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model)) where {T<:Real}
+    evaluator, cons = create_evaluator(model; x=[primal_vars; params])
+    return compute_derivatives(evaluator, cons, ∂p; primal_vars=primal_vars, params=params), evaluator, cons
 end
