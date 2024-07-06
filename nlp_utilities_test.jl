@@ -107,18 +107,18 @@ function test_compute_derivatives()
         # Analytical solutions case b
         pb = [4.5, 1.0]
         s_pb = [0.5, 0.5, 0.0]
-        @assert all(isapprox(value.(x), s_pb; atol = 1e-6))
+        @assert all(isapprox(value.(primal_vars), s_pb; atol = 1e-6))
         # Analytical solutions case a
         pa = [5.0, 1.0]
         s_pa = [0.6327, 0.3878, 0.0204]
         set_parameter_value.(params, pa)
         optimize!(model)
         @assert is_solved_and_feasible(model)
-        @assert all(isapprox(value.(x), s_pa; atol = 1e-4))
+        @assert all(isapprox(value.(primal_vars), s_pa; atol = 1e-4))
         # Compute derivatives without accounting for active set changes
         evaluator, rows = create_evaluator(model; x=[primal_vars; params])
-        X, V_L, X_L, V_U, X_U, ineq_locations = compute_solution_and_bounds(primal_vars, rows)
-        ∂s, K, N = compute_derivatives_no_relax(evaluator, rows, primal_vars, params, X, V_L, X_L, V_U, X_U, ineq_locations)
+        X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low = compute_solution_and_bounds(primal_vars, rows)
+        ∂s, K, N = compute_derivatives_no_relax(evaluator, rows, primal_vars, params, X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low)
         # Check linear approx s_pb
         ∂p = pb - pa
         s_pb_approx_violated = s_pa + ∂s[1:3, :] * ∂p

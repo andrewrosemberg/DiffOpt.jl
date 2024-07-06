@@ -151,18 +151,19 @@ function compute_solution_and_bounds(primal_vars, cons)
     ineq_locations = find_inequealities(cons)
     num_ineq = length(ineq_locations)
     slack_vars = [get_slack_inequality(cons[i]) for i in ineq_locations]
+    has_up =  findall(x -> has_upper_bound(x), primal_vars)
+    has_low = findall(x -> has_lower_bound(x), primal_vars)
 
     # Primal solution
     X = value.([primal_vars; slack_vars])
 
     # value and dual of the lower bounds
-    V_L = zeros(num_vars+num_ineq)
-    X_L = zeros(num_vars+num_ineq)
-    for i in 1:num_vars
-        if has_lower_bound(primal_vars[i])
-            V_L[i] = dual.(LowerBoundRef(primal_vars[i]))
-            X_L[i] = JuMP.lower_bound(primal_vars[i])
-        end
+    num_low = length(has_low)
+    V_L = zeros(num_low+num_ineq)
+    X_L = zeros(num_low+num_ineq)
+    for (i, j) in enumerate(has_low)
+        V_L[i] = dual.(LowerBoundRef(primal_vars[j]))
+        X_L[i] = JuMP.lower_bound(primal_vars[j])
     end
     for (i, con) in enumerate(cons[ineq_locations])
         V_L[num_vars+i] = dual.(con)
@@ -170,14 +171,12 @@ function compute_solution_and_bounds(primal_vars, cons)
     # value and dual of the upper bounds
     V_U = zeros(num_vars+num_ineq)
     X_U = zeros(num_vars+num_ineq)
-    for i in 1:num_vars
-        if has_upper_bound(primal_vars[i])
-            V_U[i] = dual.(UpperBoundRef(primal_vars[i]))
-            X_U[i] = JuMP.upper_bound(primal_vars[i])
-        end
+    for (i, j) in enumerate(has_up)
+        V_U[i] = dual.(UpperBoundRef(primal_vars[j]))
+        X_U[i] = JuMP.upper_bound(primal_vars[j])
     end
 
-    return X, V_L, X_L, V_U, X_U, ineq_locations
+    return X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low
 end
 
 """
@@ -187,7 +186,8 @@ Compute the derivatives of the solution with respect to the parameters without a
 """
 function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef},
     primal_vars::Vector{VariableRef}, params::Vector{VariableRef}, 
-    _X::Vector{T}, _V_L::Vector{T}, _X_L::Vector{T}, _V_U::Vector{T}, _X_U::Vector{T}, ineq_locations::Vector{Z}
+    _X::Vector{T}, _V_L::Vector{T}, _X_L::Vector{T}, _V_U::Vector{T}, _X_U::Vector{T}, ineq_locations::Vector{Z},
+    has_up::Vector{Z}, has_low::Vector{Z}
 ) where {T<:Real, Z<:Integer}
     @assert all(x -> is_parameter(x), params) "All parameters must be parameters"
 
@@ -197,16 +197,29 @@ function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::
     num_cons = length(cons)
     num_ineq = length(ineq_locations)
     all_vars = [primal_vars; params]
+    num_low = length(has_low)
+    num_up = length(has_up)
 
     # Primal solution
-    X = diagm(_X)
+    X_lb = zeros(num_low, num_vars + num_ineq)
+    X_ub = zeros(num_up, num_vars + num_ineq)
+    V_L = zeros(num_low, num_vars + num_ineq)
+    V_U = zeros(num_up, num_vars + num_ineq)
+    I_L = zeros(num_vars + num_ineq,  num_low)
+    I_U = zeros(num_vars + num_ineq,  num_up)
 
     # value and dual of the lower bounds
-    V_L = diagm(_V_L)
-    X_L = diagm(_X_L)
+    for (i, j) in enumerate(has_low)
+        V_L[i, j] = _V_L[j]
+        X_lb[i, j] = _X[j] - _X_L[j]
+        I_L[j, i] = -1
+    end
     # value and dual of the upper bounds
-    V_U = diagm(_V_U)
-    X_U = diagm(_X_U)
+    for (i, j) in enumerate(has_up)
+        V_U[i, j] = _V_U[j]
+        X_ub[i, j] = _X_U[j] - _X[j]
+        I_U[j, i] = 1
+    end
 
     # Function Derivatives
     hessian, jacobian = compute_optimal_hess_jac(evaluator, cons, all_vars)
@@ -231,23 +244,23 @@ function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::
     #     [W A' -I I];
     #     [A 0 0 0];
     #     [V_L 0 (X - X_L) 0]
-    #     [V_U 0 0 0 (X - X_U)]
+    #     [V_U 0 0 0 (X_U - X)]
     # ]
     len_w = num_vars + num_ineq
-    M = zeros(3 * len_w + num_cons, 3 * len_w + num_cons)
+    M = zeros(len_w + num_cons + num_low + num_up, len_w + num_cons + num_low + num_up)
 
     M[1:len_w, 1:len_w] = W
     M[1:len_w, len_w + 1 : len_w + num_cons] = A'
     M[len_w+1:len_w+num_cons, 1:len_w] = A
-    M[1:len_w, len_w+num_cons+1:2 * len_w+num_cons] = -I(len_w)
-    M[len_w+num_cons+1:2 * len_w+num_cons, 1:len_w] = V_L
-    M[len_w+num_cons+1:2 * len_w+num_cons, len_w+num_cons+1:2 * len_w+num_cons] = X - X_L
-    M[2 * len_w+num_cons+1:3 * len_w+num_cons, 1:len_w] = V_U
-    M[2 * len_w+num_cons+1:3 * len_w+num_cons, 2 * len_w+num_cons+1:3 * len_w+num_cons] = X - X_U
-    M[1:len_w, 2 * len_w+num_cons+1:end] = I(len_w)
+    M[1:len_w, len_w+num_cons+1:len_w+num_cons+num_low] = I_L
+    M[len_w+num_cons+1:len_w+num_cons+num_low, 1:len_w] = V_L
+    M[len_w+num_cons+1:len_w+num_cons+num_low, len_w+num_cons+1:len_w+num_cons+num_low] = X_lb
+    M[len_w+num_cons+num_low+1:len_w+num_cons+num_low+num_up, 1:len_w] = V_U
+    M[len_w+num_cons+num_low+1:len_w+num_cons+num_low+num_up, len_w+num_cons+num_low+1:len_w+num_cons+num_low+num_up] = X_ub
+    M[1:len_w, len_w+num_cons+num_low+1:end] = I_U
 
     # N matrix
-    N = [∇ₓₚL ; ∇ₚC; zeros(2 * len_w, num_parms)]
+    N = [∇ₓₚL ; ∇ₚC; zeros(num_low + num_up, num_parms)]
 
     # Sesitivity of the solution (primal-dual_constraints-dual_bounds) with respect to the parameters
     K = qr(M) # Factorization
@@ -274,10 +287,10 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
 ) where {T<:Real}
     num_cons = length(cons)
     # Solution and bounds
-    X, V_L, X_L, V_U, X_U, ineq_locations = compute_solution_and_bounds(primal_vars, cons)
+    X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low = compute_solution_and_bounds(primal_vars, cons)
     num_w = length(ineq_locations) + length(primal_vars)
     # Compute derivatives
-    ∂s, K, N = compute_derivatives_no_relax(evaluator, cons, primal_vars, params, X, V_L, X_L, V_U, X_U, ineq_locations)
+    ∂s, K, N = compute_derivatives_no_relax(evaluator, cons, primal_vars, params, X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low)
     # Linearly appoximated solution
     sp = [X; dual.(cons); V_L; V_U] .+ ∂s * ∂p
     # One-hot vector that signals the bounds that are violated 
