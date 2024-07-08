@@ -333,7 +333,7 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     if !isempty(r1)
         return fix_and_relax(E, K, N, r1, ∂p), evaluator, cons
     end
-    return ∂s
+    return ∂s * ∂p, evaluator, cons
 end
 
 function compute_derivatives(model::Model, ∂p::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model)) where {T<:Real}
