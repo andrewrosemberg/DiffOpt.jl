@@ -124,8 +124,8 @@ function test_compute_derivatives()
         s_pb_approx_violated = s_pa + ∂s[1:3, :] * ∂p
         @test all(isapprox([0.5765; 0.3775; -0.0459], s_pb_approx_violated; atol = 1e-2))
         # Account for active set changes
-        ∂s = compute_derivatives(evaluator, rows, ∂p; primal_vars, params)
-        s_pb_approx = s_pa + ∂s[1:3, :] * ∂p
+        ∂s, evaluator, cons = compute_derivatives(evaluator, rows, ∂p; primal_vars, params)
+        s_pb_approx = s_pa + ∂s[1:3, :]
         @test all(isapprox(s_pb, s_pb_approx; atol = 1e-2))
     end
 end

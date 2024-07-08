@@ -176,7 +176,7 @@ function compute_solution_and_bounds(primal_vars, cons)
         X_U[i] = JuMP.upper_bound(primal_vars[j])
     end
 
-    return X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low
+    return X, V_L, X_L, V_U, X_U, ineq_locations, has_up, vcat(has_low, collect(num_vars+1:num_vars+num_ineq))
 end
 
 """
@@ -277,6 +277,44 @@ function fix_and_relax(E, K, N, r1, ∂p)
     return K \ (- (rs + E * ∆ν¯))
 end
 
+function find_violations(X, ∂p, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
+    num_w = length(X)
+    num_low = length(has_low)
+    num_up = length(has_up)
+    # ∂s = [∂x; ∂λ; ∂ν_L; ∂ν_U]
+    sp = [X; zeros(num_cons); V_L[has_low]; V_U[has_up]] .+ ∂s * ∂p
+    
+    _E = []
+    r1 = []
+    for i in has_low
+        if sp[i] < X_L[i] - tol
+            push!(_E, i)
+            push!(r1, X[i] - X_L[i])
+        end
+        if sp[num_w+num_cons+i] < -tol
+            push!(_E, num_w+num_cons+i)
+            push!(r1, V_L[i])
+        end
+    end
+    for i in has_up
+        if sp[i] > X_U[i] + tol
+            push!(_E, i)
+            push!(r1, X_U[i] - X[i])
+        end
+        if sp[num_w+num_cons+num_low+i] < -tol
+            push!(_E, num_w+num_cons+num_low+i)
+            push!(r1, V_U[i])
+        end
+    end
+    
+    E = zeros(num_w + num_cons + num_low + num_up, length(_E))
+    for (i, j) in enumerate(_E)
+        E[j, i] = 1
+    end
+
+    return E, r1
+end
+
 """
     compute_derivatives(model::Model; primal_vars=all_primal_vars(model), params=all_params(model))
 
@@ -288,17 +326,11 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     num_cons = length(cons)
     # Solution and bounds
     X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low = compute_solution_and_bounds(primal_vars, cons)
-    num_w = length(ineq_locations) + length(primal_vars)
     # Compute derivatives
     ∂s, K, N = compute_derivatives_no_relax(evaluator, cons, primal_vars, params, X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low)
     # Linearly appoximated solution
-    sp = [X; dual.(cons); V_L; V_U] .+ ∂s * ∂p
-    # One-hot vector that signals the bounds that are violated 
-    # [X_L<= X <= X_U, dual ∈ R, 0 <= V]
-    E = [1.0 * (sp[1:num_w] .> X_U .+ tol) + 1.0 * (sp[1:num_w] .< X_L  .+ tol); zeros(num_cons); sp[num_w+num_cons+1:end] .> 0.0  .+ tol]
-    # optimal solution at the violated bounds
-    r1 = E .* [X; zeros(num_cons); V_L; V_U]
-    if sum(E) > 0
+    E, r1 = find_violations(X, ∂p, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
+    if !isempty(r1)
         return fix_and_relax(E, K, N, r1, ∂p), evaluator, cons
     end
     return ∂s
