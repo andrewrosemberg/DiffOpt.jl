@@ -1,4 +1,6 @@
-using JuMP.MOI
+using JuMP
+using MathOptInterface
+import MathOptInterface: ConstraintSet, CanonicalConstraintFunction
 using SparseArrays
 
 """
@@ -142,8 +144,8 @@ end
 Get the reference to the canonical function that is equivalent to the slack variable of the inequality constraint.
 """
 function get_slack_inequality(con::ConstraintRef)
-    slack = MOI.get(owner_model(con), CanonicalConstraintFunction(), con)
-    return slack
+    obj = constraint_object(con)
+    return obj.func
 end
 
 function compute_solution_and_bounds(primal_vars, cons)
@@ -158,9 +160,8 @@ function compute_solution_and_bounds(primal_vars, cons)
     X = value.([primal_vars; slack_vars])
 
     # value and dual of the lower bounds
-    num_low = length(has_low)
-    V_L = zeros(num_low+num_ineq)
-    X_L = zeros(num_low+num_ineq)
+    V_L = zeros(num_vars+num_ineq)
+    X_L = zeros(num_vars+num_ineq)
     for (i, j) in enumerate(has_low)
         V_L[i] = dual.(LowerBoundRef(primal_vars[j]))
         X_L[i] = JuMP.lower_bound(primal_vars[j])
@@ -201,8 +202,8 @@ function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::
     num_up = length(has_up)
 
     # Primal solution
-    X_lb = zeros(num_low, num_vars + num_ineq)
-    X_ub = zeros(num_up, num_vars + num_ineq)
+    X_lb = zeros(num_low, num_low)
+    X_ub = zeros(num_up, num_low)
     V_L = zeros(num_low, num_vars + num_ineq)
     V_U = zeros(num_up, num_vars + num_ineq)
     I_L = zeros(num_vars + num_ineq,  num_low)
@@ -211,13 +212,13 @@ function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::
     # value and dual of the lower bounds
     for (i, j) in enumerate(has_low)
         V_L[i, j] = _V_L[j]
-        X_lb[i, j] = _X[j] - _X_L[j]
+        X_lb[i, i] = _X[j] - _X_L[j]
         I_L[j, i] = -1
     end
     # value and dual of the upper bounds
     for (i, j) in enumerate(has_up)
         V_U[i, j] = _V_U[j]
-        X_ub[i, j] = _X_U[j] - _X[j]
+        X_ub[i, i] = _X_U[j] - _X[j]
         I_U[j, i] = 1
     end
 
@@ -267,8 +268,8 @@ function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::
     return - (K \ N), K, N
 end
 
-function fix_and_relax(E, K, N, r1, ∂p)
-    rs = N * ∂p
+function fix_and_relax(E, K, N, r1, Δp)
+    rs = N * Δp
     # C = −E' inv(K) E
     C = - E' * (K \ E)
     # C ∆ν¯ = E' inv(K) rs − r1
@@ -277,32 +278,34 @@ function fix_and_relax(E, K, N, r1, ∂p)
     return K \ (- (rs + E * ∆ν¯))
 end
 
-function find_violations(X, ∂p, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
+function approximate_solution(X, Λ, V_L, V_U, Δs)
+    return [X; Λ; V_L; V_U] .+ Δs
+end
+
+function find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
     num_w = length(X)
     num_low = length(has_low)
     num_up = length(has_up)
-    # ∂s = [∂x; ∂λ; ∂ν_L; ∂ν_U]
-    sp = [X; zeros(num_cons); V_L[has_low]; V_U[has_up]] .+ ∂s * ∂p
     
     _E = []
     r1 = []
-    for i in has_low
+    for (j, i) in enumerate(has_low)
         if sp[i] < X_L[i] - tol
             push!(_E, i)
             push!(r1, X[i] - X_L[i])
         end
-        if sp[num_w+num_cons+i] < -tol
-            push!(_E, num_w+num_cons+i)
+        if sp[num_w+num_cons+j] < -tol
+            push!(_E, num_w+num_cons+j)
             push!(r1, V_L[i])
         end
     end
-    for i in has_up
+    for (j, i) in enumerate(has_up)
         if sp[i] > X_U[i] + tol
             push!(_E, i)
             push!(r1, X_U[i] - X[i])
         end
-        if sp[num_w+num_cons+num_low+i] < -tol
-            push!(_E, num_w+num_cons+num_low+i)
+        if sp[num_w+num_cons+num_low+j] < -tol
+            push!(_E, num_w+num_cons+num_low+j)
             push!(r1, V_U[i])
         end
     end
@@ -321,22 +324,27 @@ end
 Compute the derivatives of the solution with respect to the parameters.
 """
 function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}, 
-    ∂p::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model), tol=1e-6
+    Δp::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model), tol=1e-6
 ) where {T<:Real}
     num_cons = length(cons)
     # Solution and bounds
     X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low = compute_solution_and_bounds(primal_vars, cons)
     # Compute derivatives
+    # ∂s = [∂x; ∂λ; ∂ν_L; ∂ν_U]
     ∂s, K, N = compute_derivatives_no_relax(evaluator, cons, primal_vars, params, X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low)
+    Δs = ∂s * Δp
+    Λ = dual.(cons)
+    sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
     # Linearly appoximated solution
-    E, r1 = find_violations(X, ∂p, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
+    E, r1 = find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
     if !isempty(r1)
-        return fix_and_relax(E, K, N, r1, ∂p), evaluator, cons
+        Δs = fix_and_relax(E, K, N, r1, Δp)
+        sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
     end
-    return ∂s * ∂p, evaluator, cons
+    return Δs, sp
 end
 
-function compute_derivatives(model::Model, ∂p::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model)) where {T<:Real}
+function compute_derivatives(model::Model, Δp::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model)) where {T<:Real}
     evaluator, cons = create_evaluator(model; x=[primal_vars; params])
-    return compute_derivatives(evaluator, cons, ∂p; primal_vars=primal_vars, params=params), evaluator, cons
+    return compute_derivatives(evaluator, cons, Δp; primal_vars=primal_vars, params=params), evaluator, cons
 end

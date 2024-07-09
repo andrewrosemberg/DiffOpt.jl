@@ -1,13 +1,14 @@
 using JuMP
 using Ipopt
 using Test
-"""
-    create_nonlinear_jump_model()
+using FiniteDiff
 
-Create a nonlinear jump model from the example in:
-JuMP Tutorial for Querying Hessians:
+#=
+# Test JuMP Hessian and Jacobian
+
+From JuMP Tutorial for Querying Hessians:
 https://github.com/jump-dev/JuMP.jl/blob/301d46e81cb66c74c6e22cd89fb89ced740f157b/docs/src/tutorials/nonlinear/querying_hessians.jl#L67-L72
-"""
+=#
 function create_nonlinear_jump_model()
     model = Model(Ipopt.Optimizer)
     set_silent(model)
@@ -85,6 +86,11 @@ function test_compute_optimal_hess_jacobian()
 end
 
 ################################################
+#=
+# Test Derivatives and Sensitivity: QP problem 
+
+From sIpopt paper: https://optimization-online.org/2011/04/3008/
+=#
 
 function create_nonlinear_jump_model_sipopt()
     model = Model(Ipopt.Optimizer)
@@ -120,12 +126,64 @@ function test_compute_derivatives()
         X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low = compute_solution_and_bounds(primal_vars, rows)
         ∂s, K, N = compute_derivatives_no_relax(evaluator, rows, primal_vars, params, X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low)
         # Check linear approx s_pb
-        ∂p = pb - pa
-        s_pb_approx_violated = s_pa + ∂s[1:3, :] * ∂p
+        Δp = pb - pa
+        s_pb_approx_violated = s_pa + ∂s[1:3, :] * Δp
         @test all(isapprox([0.5765; 0.3775; -0.0459], s_pb_approx_violated; atol = 1e-2))
         # Account for active set changes
-        ∂s, evaluator, cons = compute_derivatives(evaluator, rows, ∂p; primal_vars, params)
-        s_pb_approx = s_pa + ∂s[1:3, :]
+        Δs = compute_derivatives(evaluator, rows, Δp; primal_vars, params)
+        s_pb_approx = s_pa + Δs[1:3, :]
         @test all(isapprox(s_pb, s_pb_approx; atol = 1e-2))
+    end
+end
+
+################################################
+#=
+# Test Sensitivity through finite differences
+=#
+
+function create_nonlinear_jump_model_1(p_val = [1.0; 2.0; 100])
+    model = Model(Ipopt.Optimizer)
+    set_silent(model)
+
+    # Parameters
+    @variable(model, p[i=1:3] ∈ MOI.Parameter.(p_val))
+
+    # Variables
+    @variable(model, x) 
+    @variable(model, y)
+
+    # Constraints
+    @constraint(model, con1, y >= p[1]*sin(x)) # NLP Constraint
+    @constraint(model, con2, x + y == p[1])
+    @constraint(model, con3, p[2] * x >= 0.1)
+    @objective(model, Min, (1 - x)^2 + p[3] * (y - x^2)^2) # NLP Objective
+
+    return model, [x; y], [con1; con2; con3], p
+end
+
+function eval_model_jump(model, primal_vars, cons, params, p_val)
+    set_parameter_value.(params, p_val)
+    optimize!(model)
+    return value.(primal_vars), dual.(cons), [dual.(LowerBoundRef(v)) for v in primal_vars if has_lower_bound(v)], [dual.(UpperBoundRef(v)) for v in primal_vars if has_upper_bound(v)]
+end
+
+function test_compute_derivatives_1()
+    @testset "Compute Derivatives" begin
+        # OPT Problem
+        p_a = [1.0; 2.0; 100]
+        model, primal_vars, cons, params = create_nonlinear_jump_model_1(p_a)
+        optimize!(model)
+        @assert is_solved_and_feasible(model)
+        # Compute derivatives
+        p_b = [1.001; 2.001; 100.001]
+        Δp = p_b - p_a
+        (Δs, sp_approx), evaluator, cons = compute_derivatives(model, Δp; primal_vars, params)
+        # Check solution
+        x_b, λ_b, ν_Lb, ν_Ub = eval_model_jump(model, primal_vars, cons, params, p_b)
+        sp = [x_b; λ_b; ν_Lb; ν_Ub] # TODO: repeat ineq on bounds
+        @test all(isapprox(sp, sp_approx; atol = 1e-3))
+        # Check derivatives using finite differences
+        ∂s_fd = FiniteDiff.finite_difference_jacobian((p) -> eval_model_jump(model, primal_vars, cons, params, p), p_a)
+        Δs_fd = ∂s_fd * Δp
     end
 end
