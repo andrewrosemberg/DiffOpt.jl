@@ -128,7 +128,7 @@ end
 
 Find the indices of the inequality constraints.
 """
-function find_inequealities(cons::Vector{ConstraintRef})
+function find_inequealities(cons::Vector{C}) where C<:ConstraintRef
     ineq_locations = zeros(length(cons))
     for i in 1:length(cons)
         if is_inequality(cons[i])

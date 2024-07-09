@@ -164,6 +164,7 @@ end
 function eval_model_jump(model, primal_vars, cons, params, p_val)
     set_parameter_value.(params, p_val)
     optimize!(model)
+    @assert is_solved_and_feasible(model)
     return value.(primal_vars), dual.(cons), [dual.(LowerBoundRef(v)) for v in primal_vars if has_lower_bound(v)], [dual.(UpperBoundRef(v)) for v in primal_vars if has_upper_bound(v)]
 end
 
@@ -172,16 +173,22 @@ function test_compute_derivatives_1()
         # OPT Problem
         p_a = [1.0; 2.0; 100]
         model, primal_vars, cons, params = create_nonlinear_jump_model_1(p_a)
-        optimize!(model)
-        @assert is_solved_and_feasible(model)
+        # Debugging
+        x_a, _λ_a, ν_La, ν_Ua = eval_model_jump(model, primal_vars, cons, params, p_a)
+        ineq_locations = find_inequealities(cons)
+        λ_a = deepcopy(_λ_a)
+        λ_a[ineq_locations] = _λ_a[ineq_locations] .* -1
+        s_a = [x_a; value.(get_slack_inequality.(cons[ineq_locations])); λ_a; ν_La; _λ_a[ineq_locations]; ν_Ua]
         # Compute derivatives
-        p_b = [1.001; 2.001; 100.001]
+        p_b = [1.5; 2.00; 100.0]
         Δp = p_b - p_a
         (Δs, sp_approx), evaluator, cons = compute_derivatives(model, Δp; primal_vars, params)
         # Check solution
-        x_b, λ_b, ν_Lb, ν_Ub = eval_model_jump(model, primal_vars, cons, params, p_b)
+        x_b, _λ_b, ν_Lb, ν_Ub = eval_model_jump(model, primal_vars, cons, params, p_b)
         ineq_locations = find_inequealities(cons)
-        sp = [x_b; value.(get_slack_inequality.(cons[ineq_locations])); λ_b; ν_Lb; λ_b[ineq_locations]; ν_Ub] 
+        λ_b = deepcopy(_λ_b)
+        λ_b[ineq_locations] = _λ_b[ineq_locations] .* -1
+        sp = [x_b; value.(get_slack_inequality.(cons[ineq_locations])); λ_b; ν_Lb; _λ_b[ineq_locations]; ν_Ub] 
         @test all(isapprox.(sp, sp_approx; atol = 1e-2))
         # Check derivatives using finite differences
         # ∂s_fd = FiniteDiff.finite_difference_jacobian((p) -> eval_model_jump(model, primal_vars, cons, params, p), p_a)
