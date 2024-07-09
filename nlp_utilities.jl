@@ -334,6 +334,7 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     ∂s, K, N = compute_derivatives_no_relax(evaluator, cons, primal_vars, params, X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low)
     Δs = ∂s * Δp
     Λ = dual.(cons)
+    Λ[ineq_locations] = Λ[ineq_locations] .* -1.0 # Correcting the sign of the duals for the standard form
     sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
     # Linearly appoximated solution
     E, r1 = find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
