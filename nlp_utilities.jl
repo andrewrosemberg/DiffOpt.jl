@@ -232,7 +232,7 @@ function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::
     A = zeros(num_cons, num_vars + num_ineq)
     A[:, 1:num_vars] = jacobian[:, 1:num_vars]
     for (i,j) in enumerate(ineq_locations)
-        A[j, num_vars+i] = 1
+        A[j, num_vars+i] = -1
     end
     # Partial second derivative of the lagrangian wrt primal solution and parameters
     ∇ₓₚL = zeros(num_vars + num_ineq, num_parms)
