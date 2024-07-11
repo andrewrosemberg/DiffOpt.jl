@@ -177,6 +177,7 @@ function stack_solution(ineq_locations, x, _λ, ν_L, ν_U)
 end
 
 function print_wrong_sensitive(Δs, Δs_fd, primal_vars, cons, ineq_locations)
+    println("Some sensitivities are not correct: \n")
     # primal vars
     num_primal_vars = length(primal_vars)
     for (i, v) in enumerate(primal_vars)
@@ -223,7 +224,8 @@ DICT_PROBLEMS = Dict(
 )
 
 function test_compute_derivatives_Finite_Diff()
-    @testset "Compute Derivatives: $problem_name" for (problem_name, (p_a, Δp, model_generator)) in DICT_PROBLEMS
+    # @testset "Compute Derivatives: $problem_name" 
+    for (problem_name, (p_a, Δp, model_generator)) in DICT_PROBLEMS
         # OPT Problem
         # p_a = [3.0; 2.0; 200]
         model, primal_vars, cons, params = model_generator()
@@ -240,7 +242,13 @@ function test_compute_derivatives_Finite_Diff()
         # Check derivatives using finite differences
         ∂s_fd = FiniteDiff.finite_difference_jacobian((p) -> stack_solution(ineq_locations, eval_model_jump(model, primal_vars, cons, params, p)...), p_a)
         Δs_fd = ∂s_fd * Δp
-        # @test all(isapprox.(Δs, Δs_fd; atol = 1e-2))
-        print_wrong_sensitive(Δs, Δs_fd, primal_vars, cons, ineq_locations)
+
+        println("$problem_name: ", model)
+        if all(isapprox.(Δs, Δs_fd; atol = 1e-2))
+            println("All sensitivities are correct")
+        else
+            print_wrong_sensitive(Δs, Δs_fd, primal_vars, cons, ineq_locations)
+        end
+        println("--------------------")
     end
 end
