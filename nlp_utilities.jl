@@ -2,6 +2,7 @@ using JuMP
 using MathOptInterface
 import MathOptInterface: ConstraintSet, CanonicalConstraintFunction
 using SparseArrays
+using LinearAlgebra
 
 """
     create_nlp_model(model::JuMP.Model)
@@ -324,7 +325,7 @@ end
 Compute the derivatives of the solution with respect to the parameters.
 """
 function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}, 
-    Δp::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model), tol=1e-6
+    Δp::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model), tol=1e-8
 ) where {T<:Real}
     num_cons = length(cons)
     # Solution and bounds
@@ -339,6 +340,7 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     # Linearly appoximated solution
     E, r1 = find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
     if !isempty(r1)
+        @warn "Relaxation needed"
         Δs = fix_and_relax(E, K, N, r1, Δp)
         sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
     end
