@@ -277,21 +277,26 @@ function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::
     _X::Vector{T}, _V_L::Vector{T}, _X_L::Vector{T}, _V_U::Vector{T}, _X_U::Vector{T}, ineq_locations::Vector{Z},
     has_up::Vector{Z}, has_low::Vector{Z}
 ) where {T<:Real, Z<:Integer}
+    num_bounds = length(has_up) + length(has_low)
     M, N = build_M_N(evaluator, cons, primal_vars, params, _X, _V_L, _X_L, _V_U, _X_U, ineq_locations, has_up, has_low)
 
     # Sesitivity of the solution (primal-dual_constraints-dual_bounds) with respect to the parameters
     K = qr(M) # Factorization
-    return - (K \ N), K, N
+    ∂s = - (K \ N) # Sensitivity
+    ∂s[end-num_bounds+1:end,:] = ∂s[end-num_bounds+1:end,:]  .* -1.0 # Correcting the sign of the bounds duals for the standard form
+    return ∂s, K, N
 end
 
-function fix_and_relax(E, K, N, r1, Δp)
+function fix_and_relax(E, K, N, r1, Δp, num_bounds)
     rs = N * Δp
     # C = −E' inv(K) E
     C = - E' * (K \ E)
     # C ∆ν¯ = E' inv(K) rs − r1
     ∆ν¯ = C \ (E' * (K \ rs) - r1)
     # K ∆s = − (rs + E∆ν¯)
-    return K \ (- (rs + E * ∆ν¯))
+    ∆s = K \ (- (rs + E * ∆ν¯))
+    ∆s[end-num_bounds+1:end] = ∆s[end-num_bounds+1:end] .* -1.0 # Correcting the sign of the bounds duals for the standard form
+    return ∆s
 end
 
 function approximate_solution(X, Λ, V_L, V_U, Δs)
@@ -349,8 +354,7 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     # ∂s = [∂x; ∂λ; ∂ν_L; ∂ν_U]
     ∂s, K, N = compute_derivatives_no_relax(evaluator, cons, primal_vars, params, X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low)
     Δs = ∂s * Δp
-    Λ = dual.(cons)
-    Λ[ineq_locations] = Λ[ineq_locations] .* -1.0 # Correcting the sign of the duals for the standard form
+    Λ = -dual.(cons)
     sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
     # Linearly appoximated solution
     E, r1 = find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
