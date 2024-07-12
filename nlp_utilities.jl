@@ -155,7 +155,12 @@ function get_slack_inequality(con::ConstraintRef)
     return obj.func - obj.set.lower
 end
 
-function compute_solution_and_bounds(primal_vars, cons)
+"""
+    compute_solution_and_bounds(primal_vars::Vector{VariableRef}, cons::Vector{C}) where C<:ConstraintRef
+
+Compute the solution and bounds of the primal variables.
+"""
+function compute_solution_and_bounds(primal_vars::Vector{VariableRef}, cons::Vector{C}) where {C<:ConstraintRef}
     num_vars = length(primal_vars)
     ineq_locations = find_inequealities(cons)
     num_ineq = length(ineq_locations)
@@ -187,6 +192,15 @@ function compute_solution_and_bounds(primal_vars, cons)
     return X, V_L, X_L, V_U, X_U, ineq_locations, has_up, vcat(has_low, collect(num_vars+1:num_vars+num_ineq))
 end
 
+"""
+    build_M_N(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef},
+    primal_vars::Vector{VariableRef}, params::Vector{VariableRef}, 
+    _X::Vector{T}, _V_L::Vector{T}, _X_L::Vector{T}, _V_U::Vector{T}, _X_U::Vector{T}, ineq_locations::Vector{Z},
+    has_up::Vector{Z}, has_low::Vector{Z}
+) where {T<:Real, Z<:Integer}
+
+Build the M (KKT Jacobian w.r.t. solution) and N (KKT Jacobian w.r.t. parameters) matrices for the sensitivity analysis.
+"""
 function build_M_N(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef},
     primal_vars::Vector{VariableRef}, params::Vector{VariableRef}, 
     _X::Vector{T}, _V_L::Vector{T}, _X_L::Vector{T}, _V_U::Vector{T}, _X_U::Vector{T}, ineq_locations::Vector{Z},
@@ -269,9 +283,13 @@ function build_M_N(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRe
 end
 
 """
-    compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}; primal_vars::Vector{VariableRef}=all_primal_vars(model), params::Vector{VariableRef}=all_params(model))
+    compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef},
+        primal_vars::Vector{VariableRef}, params::Vector{VariableRef},
+        _X::Vector{T}, _V_L::Vector{T}, _X_L::Vector{T}, _V_U::Vector{T}, _X_U::Vector{T}, ineq_locations::Vector{Z},
+        has_up::Vector{Z}, has_low::Vector{Z}
+    ) where {T<:Real, Z<:Integer}
 
-Compute the derivatives of the solution with respect to the parameters without accounting for active set changes.
+Compute the derivatives of the solution w.r.t. the parameters without accounting for active set changes.
 """
 function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef},
     primal_vars::Vector{VariableRef}, params::Vector{VariableRef}, 
@@ -281,13 +299,18 @@ function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::
     num_bounds = length(has_up) + length(has_low)
     M, N = build_M_N(evaluator, cons, primal_vars, params, _X, _V_L, _X_L, _V_U, _X_U, ineq_locations, has_up, has_low)
 
-    # Sesitivity of the solution (primal-dual_constraints-dual_bounds) with respect to the parameters
+    # Sesitivity of the solution (primal-dual_constraints-dual_bounds) w.r.t. the parameters
     K = qr(M) # Factorization
     ∂s = - (K \ N) # Sensitivity
     ∂s[end-num_bounds+1:end,:] = ∂s[end-num_bounds+1:end,:]  .* -1.0 # Correcting the sign of the bounds duals for the standard form
     return ∂s, K, N
 end
 
+"""
+    fix_and_relax(E, K, N, r1, Δp, num_bounds)
+
+Fix the violations and relax complementary slackness.
+"""
 function fix_and_relax(E, K, N, r1, Δp, num_bounds)
     rs = N * Δp
     # C = −E' inv(K) E
@@ -300,10 +323,20 @@ function fix_and_relax(E, K, N, r1, Δp, num_bounds)
     return ∆s
 end
 
+"""
+    approximate_solution(X, Λ, V_L, V_U, Δs)
+
+First order approximation the primal-dual solution.
+"""
 function approximate_solution(X, Λ, V_L, V_U, Δs)
     return [X; Λ; V_L; V_U] .+ Δs
 end
 
+"""
+    find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
+
+Find the bound violations of the primal-dual solution first order approximation based on the (unrelaxed) sensitivity estimation.
+"""
 function find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
     num_w = length(X)
     num_low = length(has_low)
@@ -340,12 +373,8 @@ function find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, t
     return E, r1
 end
 
-"""
-    compute_derivatives(model::Model; primal_vars=all_primal_vars(model), params=all_params(model))
 
-Compute the derivatives of the solution with respect to the parameters.
-"""
-function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}, 
+function compute_sensitivity(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}, 
     Δp::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model), tol=1e-8
 ) where {T<:Real}
     num_cons = length(cons)
@@ -368,7 +397,12 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     return Δs, sp
 end
 
-function compute_derivatives(model::Model, Δp::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model)) where {T<:Real}
+"""
+    compute_sensitivity(model::Model; primal_vars=all_primal_vars(model), params=all_params(model))
+
+Compute the sensitivity of the solution given sensitivity of the parameters (Δp).
+"""
+function compute_sensitivity(model::Model, Δp::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model)) where {T<:Real}
     evaluator, cons = create_evaluator(model; x=[primal_vars; params])
-    return compute_derivatives(evaluator, cons, Δp; primal_vars=primal_vars, params=params), evaluator, cons
+    return compute_sensitivity(evaluator, cons, Δp; primal_vars=primal_vars, params=params), evaluator, cons
 end

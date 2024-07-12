@@ -5,12 +5,15 @@ using FiniteDiff
 
 include("nlp_utilities.jl")
 
+################################################
 #=
 # Test JuMP Hessian and Jacobian
 
 From JuMP Tutorial for Querying Hessians:
 https://github.com/jump-dev/JuMP.jl/blob/301d46e81cb66c74c6e22cd89fb89ced740f157b/docs/src/tutorials/nonlinear/querying_hessians.jl#L67-L72
 =#
+################################################
+
 function create_nonlinear_jump_model()
     model = Model(Ipopt.Optimizer)
     set_silent(model)
@@ -93,6 +96,7 @@ end
 
 From sIpopt paper: https://optimization-online.org/2011/04/3008/
 =#
+################################################
 
 function create_nonlinear_jump_model_sipopt()
     model = Model(Ipopt.Optimizer)
@@ -132,7 +136,7 @@ function test_compute_derivatives()
         s_pb_approx_violated = s_pa + ∂s * Δp
         @test all(isapprox.([0.5765; 0.3775; -0.0459; 0.1327; 0.3571; 0.0; 0.0; 0.0], s_pb_approx_violated; atol = 1e-4))
         # Account for active set changes
-        Δs, s_pb_approx = compute_derivatives(evaluator, rows, Δp; primal_vars, params)
+        Δs, s_pb_approx = compute_sensitivity(evaluator, rows, Δp; primal_vars, params)
         # s_pb_approx = s_pa .+ Δs
         @test all(isapprox.(s_pb, s_pb_approx; atol = 1e-4))
     end
@@ -142,6 +146,7 @@ end
 #=
 # Test Sensitivity through finite differences
 =#
+################################################
 
 function create_nonlinear_jump_model_1(p_val = [1.0; 2.0; 100])
     model = Model(Ipopt.Optimizer)
@@ -163,6 +168,44 @@ function create_nonlinear_jump_model_1(p_val = [1.0; 2.0; 100])
     return model, [x; y], [con1; con2; con3], p
 end
 
+function create_nonlinear_jump_model_2(p_val = [3.0; 2.0; 10])
+    model = Model(Ipopt.Optimizer)
+    set_silent(model)
+
+    # Parameters
+    @variable(model, p[i=1:3] ∈ MOI.Parameter.(p_val))
+
+    # Variables
+    @variable(model, x <= 10) 
+    @variable(model, y)
+
+    # Constraints
+    @constraint(model, con1, y >= p[1]*sin(x)) # NLP Constraint
+    @constraint(model, con2, x + y == p[1])
+    @constraint(model, con3, p[2] * x >= 0.1)
+    @objective(model, Min, (1 - x)^2 + p[3] * (y - x^2)^2) # NLP Objective
+    return model, [x; y], [con1; con2; con3], p
+end
+
+function create_nonlinear_jump_model_3(p_val = [3.0; 2.0; 10])
+    model = Model(Ipopt.Optimizer)
+    set_silent(model)
+
+    # Parameters
+    @variable(model, p[i=1:3] ∈ MOI.Parameter.(p_val))
+
+    # Variables
+    @variable(model, x <= 10) 
+    @variable(model, y)
+
+    # Constraints
+    @constraint(model, con1, y >= p[1]*sin(x)) # NLP Constraint
+    @constraint(model, con2, x + y == p[1])
+    @constraint(model, con3, p[2] * x >= 0.1)
+    @objective(model, Max, -(1 - x)^2 - p[3] * (y - x^2)^2) # NLP Objective
+    return model, [x; y], [con1; con2; con3], p
+end
+
 function eval_model_jump(model, primal_vars, cons, params, p_val)
     set_parameter_value.(params, p_val)
     optimize!(model)
@@ -171,8 +214,6 @@ function eval_model_jump(model, primal_vars, cons, params, p_val)
 end
 
 function stack_solution(cons, ineq_locations, x, _λ, ν_L, ν_U)
-    # λ = deepcopy(_λ)
-    # λ[ineq_locations] = _λ[ineq_locations] .* -1
     return Float64[x; value.(get_slack_inequality.(cons[ineq_locations])); _λ; ν_L; _λ[ineq_locations]; ν_U]
 end
 
@@ -219,51 +260,13 @@ function print_wrong_sensitive(Δs, Δs_fd, primal_vars, cons, ineq_locations)
     end
 end
 
-function create_nonlinear_jump_model_2(p_val = [3.0; 2.0; 10])
-    model = Model(Ipopt.Optimizer)
-    set_silent(model)
-
-    # Parameters
-    @variable(model, p[i=1:3] ∈ MOI.Parameter.(p_val))
-
-    # Variables
-    @variable(model, x <= 10) 
-    @variable(model, y)
-
-    # Constraints
-    @constraint(model, con1, y >= p[1]*sin(x)) # NLP Constraint
-    @constraint(model, con2, x + y == p[1])
-    @constraint(model, con3, p[2] * x >= 0.1)
-    @objective(model, Min, (1 - x)^2 + p[3] * (y - x^2)^2) # NLP Objective
-    return model, [x; y], [con1; con2; con3], p
-end
-
-function create_nonlinear_jump_model_3(p_val = [3.0; 2.0; 10])
-    model = Model(Ipopt.Optimizer)
-    set_silent(model)
-
-    # Parameters
-    @variable(model, p[i=1:3] ∈ MOI.Parameter.(p_val))
-
-    # Variables
-    @variable(model, x <= 10) 
-    @variable(model, y)
-
-    # Constraints
-    @constraint(model, con1, y >= p[1]*sin(x)) # NLP Constraint
-    @constraint(model, con2, x + y == p[1])
-    @constraint(model, con3, p[2] * x >= 0.1)
-    @objective(model, Max, -(1 - x)^2 - p[3] * (y - x^2)^2) # NLP Objective
-    return model, [x; y], [con1; con2; con3], p
-end
-
 DICT_PROBLEMS = Dict(
-    # "QP_JuMP" => (p_a=[1.0; 2.0; 100.0], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model),
-    # "QP_sIpopt" => (p_a=[4.5; 1.0], Δp=[0.001; 0.0], model_generator=create_nonlinear_jump_model_sipopt),
-    # "NLP_1" => (p_a=[3.0; 2.0; 200], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_1),
-    # "NLP_1_2" => (p_a=[3.0; 2.0; 200], Δp=[0.0; 0.001; 0.0], model_generator=create_nonlinear_jump_model_1),
-    # "NLP_1_3" => (p_a=[3.0; 2.0; 200], Δp=[0.0; 0.0; 0.001], model_generator=create_nonlinear_jump_model_1),
-    # "NLP_1_4" => (p_a=[3.0; 2.0; 200], Δp=[0.001; 0.001; 0.001], model_generator=create_nonlinear_jump_model_1),
+    "QP_JuMP" => (p_a=[1.0; 2.0; 100.0], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model),
+    "QP_sIpopt" => (p_a=[4.5; 1.0], Δp=[0.001; 0.0], model_generator=create_nonlinear_jump_model_sipopt),
+    "NLP_1" => (p_a=[3.0; 2.0; 200], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_1),
+    "NLP_1_2" => (p_a=[3.0; 2.0; 200], Δp=[0.0; 0.001; 0.0], model_generator=create_nonlinear_jump_model_1),
+    "NLP_1_3" => (p_a=[3.0; 2.0; 200], Δp=[0.0; 0.0; 0.001], model_generator=create_nonlinear_jump_model_1),
+    "NLP_1_4" => (p_a=[3.0; 2.0; 200], Δp=[0.001; 0.001; 0.001], model_generator=create_nonlinear_jump_model_1),
     "NLP_2" => (p_a=[3.0; 2.0; 10], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_2),
     "NLP_3" => (p_a=[3.0; 2.0; 10], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_3),
 )
@@ -277,7 +280,7 @@ function test_compute_derivatives_Finite_Diff()
         # Compute derivatives
         # Δp = [0.001; 0.0; 0.0]
         p_b = p_a + Δp
-        (Δs, sp_approx), evaluator, cons = compute_derivatives(model, Δp; primal_vars, params)
+        (Δs, sp_approx), evaluator, cons = compute_sensitivity(model, Δp; primal_vars, params)
         ineq_locations = find_inequealities(cons)
         # Check solution
         # s_a = stack_solution(cons, ineq_locations, eval_model_jump(model, primal_vars, cons, params, p_a)...)
