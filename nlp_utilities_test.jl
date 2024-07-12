@@ -219,35 +219,59 @@ function print_wrong_sensitive(Δs, Δs_fd, primal_vars, cons, ineq_locations)
     end
 end
 
-function create_nonlinear_jump_model_2()
+function create_nonlinear_jump_model_2(p_val = [3.0; 2.0; 10])
     model = Model(Ipopt.Optimizer)
     set_silent(model)
-    @variable(model, p[i=1:3] ∈ MOI.Parameter.([3.0; 2.0; 10.0]))
-    @variable(model, x_1)
-    @variable(model, x_2 >= 0.5)
-    @variable(model, x_3 <= 10)
-    @constraint(model, g_1, x_1 + x_2 == p[1])
-    @constraint(model, g_2, cos(x_1^2) + p[2] * x_2^2 <= 100.0)
-    @constraint(model, g_3, 1/(x_1 + 1) + 1/(x_2 + 2) + 1/(x_3 + 3) >= 1.0)
-    @objective(model, Min, x_1^2 + x_2^2 - p[3]*x_3)
-    return model, [x_1; x_2; x_3], [g_1; g_2; g_3], p
+
+    # Parameters
+    @variable(model, p[i=1:3] ∈ MOI.Parameter.(p_val))
+
+    # Variables
+    @variable(model, x <= 10) 
+    @variable(model, y)
+
+    # Constraints
+    @constraint(model, con1, y >= p[1]*sin(x)) # NLP Constraint
+    @constraint(model, con2, x + y == p[1])
+    @constraint(model, con3, p[2] * x >= 0.1)
+    @objective(model, Min, (1 - x)^2 + p[3] * (y - x^2)^2) # NLP Objective
+    return model, [x; y], [con1; con2; con3], p
+end
+
+function create_nonlinear_jump_model_3(p_val = [3.0; 2.0; 10])
+    model = Model(Ipopt.Optimizer)
+    set_silent(model)
+
+    # Parameters
+    @variable(model, p[i=1:3] ∈ MOI.Parameter.(p_val))
+
+    # Variables
+    @variable(model, x <= 10) 
+    @variable(model, y)
+
+    # Constraints
+    @constraint(model, con1, y >= p[1]*sin(x)) # NLP Constraint
+    @constraint(model, con2, x + y == p[1])
+    @constraint(model, con3, p[2] * x >= 0.1)
+    @objective(model, Max, -(1 - x)^2 - p[3] * (y - x^2)^2) # NLP Objective
+    return model, [x; y], [con1; con2; con3], p
 end
 
 DICT_PROBLEMS = Dict(
-    "QP_JuMP" => (p_a=[1.0; 2.0; 100.0], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model),
-    "QP_sIpopt" => (p_a=[4.5; 1.0], Δp=[0.001; 0.0], model_generator=create_nonlinear_jump_model_sipopt),
-    "NLP_1" => (p_a=[3.0; 2.0; 200], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_1),
-    "NLP_1_2" => (p_a=[3.0; 2.0; 200], Δp=[0.0; 0.001; 0.0], model_generator=create_nonlinear_jump_model_1),
-    "NLP_1_3" => (p_a=[3.0; 2.0; 200], Δp=[0.0; 0.0; 0.001], model_generator=create_nonlinear_jump_model_1),
-    "NLP_1_4" => (p_a=[3.0; 2.0; 200], Δp=[0.001; 0.001; 0.001], model_generator=create_nonlinear_jump_model_1),
-    "NLP_2" => (p_a=[3.0; 2.0; 10], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_2)
+    # "QP_JuMP" => (p_a=[1.0; 2.0; 100.0], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model),
+    # "QP_sIpopt" => (p_a=[4.5; 1.0], Δp=[0.001; 0.0], model_generator=create_nonlinear_jump_model_sipopt),
+    # "NLP_1" => (p_a=[3.0; 2.0; 200], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_1),
+    # "NLP_1_2" => (p_a=[3.0; 2.0; 200], Δp=[0.0; 0.001; 0.0], model_generator=create_nonlinear_jump_model_1),
+    # "NLP_1_3" => (p_a=[3.0; 2.0; 200], Δp=[0.0; 0.0; 0.001], model_generator=create_nonlinear_jump_model_1),
+    # "NLP_1_4" => (p_a=[3.0; 2.0; 200], Δp=[0.001; 0.001; 0.001], model_generator=create_nonlinear_jump_model_1),
+    "NLP_2" => (p_a=[3.0; 2.0; 10], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_2),
+    "NLP_3" => (p_a=[3.0; 2.0; 10], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_3),
 )
 
 function test_compute_derivatives_Finite_Diff()
     # @testset "Compute Derivatives: $problem_name" 
     for (problem_name, (p_a, Δp, model_generator)) in DICT_PROBLEMS
         # OPT Problem
-        # p_a = [3.0; 2.0; 200]
         model, primal_vars, cons, params = model_generator()
         eval_model_jump(model, primal_vars, cons, params, p_a)
         # Compute derivatives

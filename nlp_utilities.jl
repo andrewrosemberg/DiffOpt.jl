@@ -51,11 +51,12 @@ end
 Compute the optimal Hessian of the Lagrangian.
 """
 function compute_optimal_hessian(evaluator::MOI.Nonlinear.Evaluator, rows::Vector{ConstraintRef}, x::Vector{VariableRef})
+    sense_multiplier = objective_sense(owner_model(x[1])) == MOI.MIN_SENSE ? -1.0 : 1.0
     hessian_sparsity = MOI.hessian_lagrangian_structure(evaluator)
     I = [i for (i, _) in hessian_sparsity]
     J = [j for (_, j) in hessian_sparsity]
     V = zeros(length(hessian_sparsity))
-    MOI.eval_hessian_lagrangian(evaluator, V, value.(x), -1.0, dual.(rows))
+    MOI.eval_hessian_lagrangian(evaluator, V, value.(x), sense_multiplier, dual.(rows))
     H = SparseArrays.sparse(I, J, V, length(x), length(x))
     return Matrix(fill_off_diagonal(H))
 end
