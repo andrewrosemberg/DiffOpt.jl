@@ -201,20 +201,36 @@ function print_wrong_sensitive(Δs, Δs_fd, primal_vars, cons, ineq_locations)
         end
     end
     # dual lower bound primal vars
-    num_lower_bounds = length([v for v in primal_vars if has_lower_bound(v)])
-    for (i, v) in enumerate(primal_vars)
-        if has_lower_bound(v) && !isapprox(Δs[i + num_w + num_cons], Δs_fd[i + num_w + num_cons] ; atol = 1e-4)
+    var_lower = [v for v in primal_vars if has_lower_bound(v)]
+    num_lower_bounds = length(var_lower)
+    for (i, v) in enumerate(var_lower)
+        if !isapprox(Δs[i + num_w + num_cons], Δs_fd[i + num_w + num_cons] ; atol = 1e-4)
             lower_bound_ref = LowerBoundRef(v)
             println("lower bound dual: ", lower_bound_ref, " | Δs: ", Δs[i + num_w + num_cons], " | Δs_fd: ", Δs_fd[i + num_w + num_cons])
         end
     end
     # dual upper bound primal vars
-    for (i, v) in enumerate(primal_vars)
-        if has_upper_bound(v) && !isapprox(Δs[i + num_w + num_cons + num_lower_bounds + num_slack_vars], Δs_fd[i + num_w + num_cons + num_lower_bounds + num_slack_vars] ; atol = 1e-4)
+    var_upper = [v for v in primal_vars if has_upper_bound(v)]
+    for (i, v) in enumerate(var_upper)
+        if !isapprox(Δs[i + num_w + num_cons + num_lower_bounds + num_slack_vars], Δs_fd[i + num_w + num_cons + num_lower_bounds + num_slack_vars] ; atol = 1e-4)
             upper_bound_ref = UpperBoundRef(v)
             println("upper bound dual: ", upper_bound_ref, " | Δs: ", Δs[i + num_w + num_cons + num_lower_bounds + num_slack_vars], " | Δs_fd: ", Δs_fd[i + num_w + num_cons + num_lower_bounds + num_slack_vars])
         end
     end
+end
+
+function create_nonlinear_jump_model_2()
+    model = Model(Ipopt.Optimizer)
+    set_silent(model)
+    @variable(model, p[i=1:3] ∈ MOI.Parameter.([3.0; 2.0; 10.0]))
+    @variable(model, x_1)
+    @variable(model, x_2 >= 0.5)
+    @variable(model, x_3 <= 10)
+    @constraint(model, g_1, x_1 + x_2 == p[1])
+    @constraint(model, g_2, cos(x_1^2) + p[2] * x_2^2 <= 100.0)
+    @constraint(model, g_3, 1/(x_1 + 1) + 1/(x_2 + 2) + 1/(x_3 + 3) >= 1.0)
+    @objective(model, Min, x_1^2 + x_2^2 - p[3]*x_3)
+    return model, [x_1; x_2; x_3], [g_1; g_2; g_3], p
 end
 
 DICT_PROBLEMS = Dict(
@@ -224,6 +240,7 @@ DICT_PROBLEMS = Dict(
     "NLP_1_2" => (p_a=[3.0; 2.0; 200], Δp=[0.0; 0.001; 0.0], model_generator=create_nonlinear_jump_model_1),
     "NLP_1_3" => (p_a=[3.0; 2.0; 200], Δp=[0.0; 0.0; 0.001], model_generator=create_nonlinear_jump_model_1),
     "NLP_1_4" => (p_a=[3.0; 2.0; 200], Δp=[0.001; 0.001; 0.001], model_generator=create_nonlinear_jump_model_1),
+    "NLP_2" => (p_a=[3.0; 2.0; 10], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_2)
 )
 
 function test_compute_derivatives_Finite_Diff()
@@ -232,14 +249,14 @@ function test_compute_derivatives_Finite_Diff()
         # OPT Problem
         # p_a = [3.0; 2.0; 200]
         model, primal_vars, cons, params = model_generator()
-        ineq_locations = find_inequealities(cons)
-        # Debugging
-        s_a = stack_solution(cons, ineq_locations, eval_model_jump(model, primal_vars, cons, params, p_a)...)
+        eval_model_jump(model, primal_vars, cons, params, p_a)
         # Compute derivatives
         # Δp = [0.001; 0.0; 0.0]
         p_b = p_a + Δp
         (Δs, sp_approx), evaluator, cons = compute_derivatives(model, Δp; primal_vars, params)
+        ineq_locations = find_inequealities(cons)
         # Check solution
+        # s_a = stack_solution(cons, ineq_locations, eval_model_jump(model, primal_vars, cons, params, p_a)...)
         # sp = stack_solution(cons, ineq_locations, eval_model_jump(model, primal_vars, cons, params, p_b)...)
         # @test all(isapprox.(sp, sp_approx; atol = 1e-4))
         # Check derivatives using finite differences

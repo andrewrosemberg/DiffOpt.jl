@@ -204,7 +204,7 @@ function build_M_N(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRe
 
     # Primal solution
     X_lb = zeros(num_low, num_low)
-    X_ub = zeros(num_up, num_low)
+    X_ub = zeros(num_up, num_up)
     V_L = zeros(num_low, num_vars + num_ineq)
     V_U = zeros(num_up, num_vars + num_ineq)
     I_L = zeros(num_vars + num_ineq,  num_low)
@@ -360,7 +360,8 @@ function compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     E, r1 = find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
     if !isempty(r1)
         @warn "Relaxation needed"
-        Δs = fix_and_relax(E, K, N, r1, Δp)
+        num_bounds = length(has_up) + length(has_low)
+        Δs = fix_and_relax(E, K, N, r1, Δp, num_bounds)
         sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
     end
     return Δs, sp
