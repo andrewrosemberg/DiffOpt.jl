@@ -119,7 +119,7 @@ function test_compute_derivatives()
         # Analytical solutions case b
         pb = [4.5, 1.0]
         s_pb = [0.5, 0.5, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0]
-        @assert all(isapprox(value.(primal_vars), s_pb; atol = 1e-6))
+        @assert all(isapprox.([value.(primal_vars); dual.(cons); dual.(LowerBoundRef.(primal_vars))], s_pb; atol = 1e-6))
         # Analytical solutions case a
         pa = [5.0, 1.0]
         s_pa = [0.6327, 0.3878, 0.0204, 0.1633, 0.2857, 0, 0, 0]
