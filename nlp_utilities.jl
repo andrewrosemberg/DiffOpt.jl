@@ -55,7 +55,7 @@ function compute_optimal_hessian(evaluator::MOI.Nonlinear.Evaluator, rows::Vecto
     I = [i for (i, _) in hessian_sparsity]
     J = [j for (_, j) in hessian_sparsity]
     V = zeros(length(hessian_sparsity))
-    MOI.eval_hessian_lagrangian(evaluator, V, value.(x), 1.0, dual.(rows))
+    MOI.eval_hessian_lagrangian(evaluator, V, value.(x), -1.0, dual.(rows))
     H = SparseArrays.sparse(I, J, V, length(x), length(x))
     return Matrix(fill_off_diagonal(H))
 end
@@ -145,8 +145,13 @@ end
 Get the reference to the canonical function that is equivalent to the slack variable of the inequality constraint.
 """
 function get_slack_inequality(con::ConstraintRef)
+    set_type = typeof(MOI.get(owner_model(con), MOI.ConstraintSet(), con))
     obj = constraint_object(con)
-    return obj.func
+    if set_type <: MOI.LessThan
+        # c(x) <= b --> slack = -c(x) + b | slack >= 0
+        return - obj.func + obj.set.upper 
+    end
+    return obj.func - obj.set.lower
 end
 
 function compute_solution_and_bounds(primal_vars, cons)
@@ -181,12 +186,7 @@ function compute_solution_and_bounds(primal_vars, cons)
     return X, V_L, X_L, V_U, X_U, ineq_locations, has_up, vcat(has_low, collect(num_vars+1:num_vars+num_ineq))
 end
 
-"""
-    compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}; primal_vars::Vector{VariableRef}=all_primal_vars(model), params::Vector{VariableRef}=all_params(model))
-
-Compute the derivatives of the solution with respect to the parameters without accounting for active set changes.
-"""
-function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef},
+function build_M_N(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef},
     primal_vars::Vector{VariableRef}, params::Vector{VariableRef}, 
     _X::Vector{T}, _V_L::Vector{T}, _X_L::Vector{T}, _V_U::Vector{T}, _X_U::Vector{T}, ineq_locations::Vector{Z},
     has_up::Vector{Z}, has_low::Vector{Z}
@@ -263,6 +263,21 @@ function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::
 
     # N matrix
     N = [∇ₓₚL ; ∇ₚC; zeros(num_low + num_up, num_parms)]
+
+    return M, N
+end
+
+"""
+    compute_derivatives(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}; primal_vars::Vector{VariableRef}=all_primal_vars(model), params::Vector{VariableRef}=all_params(model))
+
+Compute the derivatives of the solution with respect to the parameters without accounting for active set changes.
+"""
+function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef},
+    primal_vars::Vector{VariableRef}, params::Vector{VariableRef}, 
+    _X::Vector{T}, _V_L::Vector{T}, _X_L::Vector{T}, _V_U::Vector{T}, _X_U::Vector{T}, ineq_locations::Vector{Z},
+    has_up::Vector{Z}, has_low::Vector{Z}
+) where {T<:Real, Z<:Integer}
+    M, N = build_M_N(evaluator, cons, primal_vars, params, _X, _V_L, _X_L, _V_U, _X_U, ineq_locations, has_up, has_low)
 
     # Sesitivity of the solution (primal-dual_constraints-dual_bounds) with respect to the parameters
     K = qr(M) # Factorization

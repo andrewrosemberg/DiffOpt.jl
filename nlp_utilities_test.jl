@@ -114,27 +114,27 @@ function test_compute_derivatives()
         @assert is_solved_and_feasible(model)
         # Analytical solutions case b
         pb = [4.5, 1.0]
-        s_pb = [0.5, 0.5, 0.0]
+        s_pb = [0.5, 0.5, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0]
         @assert all(isapprox(value.(primal_vars), s_pb; atol = 1e-6))
         # Analytical solutions case a
         pa = [5.0, 1.0]
-        s_pa = [0.6327, 0.3878, 0.0204]
+        s_pa = [0.6327, 0.3878, 0.0204, 0.1633, 0.2857, 0, 0, 0]
         set_parameter_value.(params, pa)
         optimize!(model)
         @assert is_solved_and_feasible(model)
-        @assert all(isapprox(value.(primal_vars), s_pa; atol = 1e-4))
+        @assert all(isapprox.([value.(primal_vars); dual.(cons); dual.(LowerBoundRef.(primal_vars))], s_pa; atol = 1e-4))
         # Compute derivatives without accounting for active set changes
         evaluator, rows = create_evaluator(model; x=[primal_vars; params])
         X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low = compute_solution_and_bounds(primal_vars, rows)
         ∂s, K, N = compute_derivatives_no_relax(evaluator, rows, primal_vars, params, X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low)
         # Check linear approx s_pb
         Δp = pb - pa
-        s_pb_approx_violated = s_pa + ∂s[1:3, :] * Δp
-        @test all(isapprox([0.5765; 0.3775; -0.0459], s_pb_approx_violated; atol = 1e-2))
+        s_pb_approx_violated = s_pa + ∂s * Δp
+        @test all(isapprox.([0.5765; 0.3775; -0.0459; 0.1327; 0.3571; 0.0; 0.0; 0.0], s_pb_approx_violated; atol = 1e-4))
         # Account for active set changes
-        Δs = compute_derivatives(evaluator, rows, Δp; primal_vars, params)
-        s_pb_approx = s_pa + Δs[1:3, :]
-        @test all(isapprox(s_pb, s_pb_approx; atol = 1e-2))
+        Δs, s_pb_approx = compute_derivatives(evaluator, rows, Δp; primal_vars, params)
+        # s_pb_approx = s_pa .+ Δs
+        @test all(isapprox.(s_pb, s_pb_approx; atol = 1e-2))
     end
 end
 
@@ -170,10 +170,10 @@ function eval_model_jump(model, primal_vars, cons, params, p_val)
     return value.(primal_vars), dual.(cons), [dual.(LowerBoundRef(v)) for v in primal_vars if has_lower_bound(v)], [dual.(UpperBoundRef(v)) for v in primal_vars if has_upper_bound(v)]
 end
 
-function stack_solution(ineq_locations, x, _λ, ν_L, ν_U)
-    λ = deepcopy(_λ)
-    λ[ineq_locations] = _λ[ineq_locations] .* -1
-    return Float64[x; value.(get_slack_inequality.(cons[ineq_locations])); λ; ν_L; _λ[ineq_locations]; ν_U]
+function stack_solution(cons, ineq_locations, x, _λ, ν_L, ν_U)
+    # λ = deepcopy(_λ)
+    # λ[ineq_locations] = _λ[ineq_locations] .* -1
+    return Float64[x; value.(get_slack_inequality.(cons[ineq_locations])); _λ; ν_L; _λ[ineq_locations]; ν_U]
 end
 
 function print_wrong_sensitive(Δs, Δs_fd, primal_vars, cons, ineq_locations)
@@ -231,16 +231,16 @@ function test_compute_derivatives_Finite_Diff()
         model, primal_vars, cons, params = model_generator()
         ineq_locations = find_inequealities(cons)
         # Debugging
-        s_a = stack_solution(ineq_locations, eval_model_jump(model, primal_vars, cons, params, p_a)...)
+        s_a = stack_solution(cons, ineq_locations, eval_model_jump(model, primal_vars, cons, params, p_a)...)
         # Compute derivatives
         # Δp = [0.001; 0.0; 0.0]
         # p_b = p_a + Δp
         (Δs, sp_approx), evaluator, cons = compute_derivatives(model, Δp; primal_vars, params)
         # Check solution
-        # sp = stack_solution(ineq_locations, eval_model_jump(model, primal_vars, cons, params, p_b)...)
+        # sp = stack_solution(cons, ineq_locations, eval_model_jump(model, primal_vars, cons, params, p_b)...)
         # @test all(isapprox.(sp, sp_approx; atol = 1e-2))
         # Check derivatives using finite differences
-        ∂s_fd = FiniteDiff.finite_difference_jacobian((p) -> stack_solution(ineq_locations, eval_model_jump(model, primal_vars, cons, params, p)...), p_a)
+        ∂s_fd = FiniteDiff.finite_difference_jacobian((p) -> stack_solution(cons, ineq_locations, eval_model_jump(model, primal_vars, cons, params, p)...), p_a)
         Δs_fd = ∂s_fd * Δp
 
         println("$problem_name: ", model)
