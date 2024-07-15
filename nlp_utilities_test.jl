@@ -310,18 +310,21 @@ function print_wrong_sensitive(Δs, Δs_fd, primal_vars, cons, ineq_locations)
 end
 
 DICT_PROBLEMS = Dict(
-    "QP_JuMP" => (p_a=[1.0; 2.0; 100.0], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model),
+    "QP_JuMP" => (p_a=[1.0; 2.0; 100.0], Δp=[-0.5; 0.5; 0.1], model_generator=create_nonlinear_jump_model),
     "QP_sIpopt" => (p_a=[4.5; 1.0], Δp=[0.001; 0.0], model_generator=create_nonlinear_jump_model_sipopt),
     "NLP_1" => (p_a=[3.0; 2.0; 200], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_1),
     "NLP_1_2" => (p_a=[3.0; 2.0; 200], Δp=[0.0; 0.001; 0.0], model_generator=create_nonlinear_jump_model_1),
     "NLP_1_3" => (p_a=[3.0; 2.0; 200], Δp=[0.0; 0.0; 0.001], model_generator=create_nonlinear_jump_model_1),
     "NLP_1_4" => (p_a=[3.0; 2.0; 200], Δp=[0.001; 0.001; 0.001], model_generator=create_nonlinear_jump_model_1),
+    "NLP_1_4" => (p_a=[3.0; 2.0; 200], Δp=[0.001; -0.01; 0.001], model_generator=create_nonlinear_jump_model_1),
     "NLP_2" => (p_a=[3.0; 2.0; 10], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_2),
+    "NLP_2_2" => (p_a=[3.0; 2.0; 10], Δp=[-0.01; 0.0; 0.0], model_generator=create_nonlinear_jump_model_2),
     "NLP_3" => (p_a=[3.0; 2.0; 10], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_3),
     "NLP_3_2" => (p_a=[3.0; 2.0; 10], Δp=[0.0; 0.001; 0.0], model_generator=create_nonlinear_jump_model_3),
     "NLP_3_3" => (p_a=[3.0; 2.0; 10], Δp=[0.0; 0.0; 0.001], model_generator=create_nonlinear_jump_model_3),
     "NLP_3_4" => (p_a=[3.0; 2.0; 10], Δp=[0.001; 0.001; 0.001], model_generator=create_nonlinear_jump_model_3),
     "NLP_3_5" => (p_a=[3.0; 2.0; 10], Δp=[0.01; 0.03; 0.1], model_generator=create_nonlinear_jump_model_3),
+    "NLP_3_6" => (p_a=[3.0; 2.0; 10], Δp=[0.0; 0.000; -0.01], model_generator=create_nonlinear_jump_model_3),
     "NLP_4" => (p_a=[1.0; 2.0; 100], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_4),
     "NLP_5" => (p_a=[1.0; 2.0; 100], Δp=[0.0; 0.001; 0.0], model_generator=create_nonlinear_jump_model_5),
 )
@@ -349,6 +352,7 @@ function test_compute_derivatives_Finite_Diff()
         if all(isapprox.(Δs, Δs_fd; atol = 1e-6))
             println("All sensitivities are correct")
         else
+            @show Δp 
             print_wrong_sensitive(Δs, Δs_fd, primal_vars, cons, ineq_locations)
         end
         println("--------------------")
