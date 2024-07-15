@@ -13,7 +13,7 @@ function create_nlp_model(model::JuMP.Model)
     rows = Vector{ConstraintRef}(undef, 0)
     nlp = MOI.Nonlinear.Model()
     for (F, S) in list_of_constraint_types(model)
-        if F <: VariableRef
+        if F <: VariableRef && !(S <: MathOptInterface.EqualTo{Float64})
             continue  # Skip variable bounds
         end
         for ci in all_constraints(model, F, S)

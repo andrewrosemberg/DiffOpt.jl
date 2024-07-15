@@ -227,7 +227,7 @@ function create_nonlinear_jump_model_4(p_val = [1.0; 2.0; 100])
     return model, [x; y], [con1; con2; con3], p
 end
 
-function create_nonlinear_jump_model_4_2(p_val = [1.0; 2.0; 100])
+function create_nonlinear_jump_model_5(p_val = [1.0; 2.0; 100])
     model = Model(Ipopt.Optimizer)
     set_silent(model)
 
@@ -239,7 +239,8 @@ function create_nonlinear_jump_model_4_2(p_val = [1.0; 2.0; 100])
     @variable(model, y)
 
     # Constraints
-    @constraint(model, con0, x == 0.5)
+    fix(x, 0.5)
+    con0 = JuMP.FixRef(x)
     @constraint(model, con1, y >= p[1]*sin(x)) # NLP Constraint
     @constraint(model, con2, x + y == p[1])
     @constraint(model, con3, p[2] * x >= 0.1)
@@ -322,7 +323,7 @@ DICT_PROBLEMS = Dict(
     "NLP_3_4" => (p_a=[3.0; 2.0; 10], Δp=[0.001; 0.001; 0.001], model_generator=create_nonlinear_jump_model_3),
     "NLP_3_5" => (p_a=[3.0; 2.0; 10], Δp=[0.01; 0.03; 0.1], model_generator=create_nonlinear_jump_model_3),
     "NLP_4" => (p_a=[1.0; 2.0; 100], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_4),
-    "NLP_4_2" => (p_a=[1.0; 2.0; 100], Δp=[0.0; 0.001; 0.0], model_generator=create_nonlinear_jump_model_4),
+    "NLP_5" => (p_a=[1.0; 2.0; 100], Δp=[0.0; 0.001; 0.0], model_generator=create_nonlinear_jump_model_5),
 )
 
 function test_compute_derivatives_Finite_Diff()
