@@ -58,7 +58,7 @@ function compute_optimal_hessian(evaluator::MOI.Nonlinear.Evaluator, rows::Vecto
     V = zeros(length(hessian_sparsity))
     MOI.eval_hessian_lagrangian(evaluator, V, value.(x), sense_multiplier, dual.(rows))
     H = SparseArrays.sparse(I, J, V, length(x), length(x))
-    return Matrix(fill_off_diagonal(H))
+    return fill_off_diagonal(H)
 end
 
 """
@@ -73,7 +73,7 @@ function compute_optimal_jacobian(evaluator::MOI.Nonlinear.Evaluator, rows::Vect
     V = zeros(length(jacobian_sparsity))
     MOI.eval_constraint_jacobian(evaluator, V, value.(x))
     A = SparseArrays.sparse(I, J, V, length(rows), length(x))
-    return Matrix(A)
+    return A # Matrix(A)
 end
 
 """
