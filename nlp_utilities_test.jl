@@ -129,8 +129,8 @@ function test_compute_derivatives()
         @assert all(isapprox.([value.(primal_vars); dual.(cons); dual.(LowerBoundRef.(primal_vars))], s_pa; atol = 1e-4))
         # Compute derivatives without accounting for active set changes
         evaluator, rows = create_evaluator(model; x=[primal_vars; params])
-        X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low = compute_solution_and_bounds(primal_vars, rows)
-        ∂s, K, N = compute_derivatives_no_relax(evaluator, rows, primal_vars, params, X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low)
+        X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low = compute_solution_and_bounds(primal_vars, rows)
+        ∂s, K, N = compute_derivatives_no_relax(evaluator, rows, primal_vars, params, X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low)
         # Check linear approx s_pb
         Δp = pb - pa
         s_pb_approx_violated = s_pa + ∂s * Δp
@@ -249,6 +249,28 @@ function create_nonlinear_jump_model_5(p_val = [1.0; 2.0; 100])
     return model, [x; y], [con0; con1; con2; con3], p
 end
 
+function create_nonlinear_jump_model_6(p_val = [100.0; 200.0])
+    model = Model(Ipopt.Optimizer)
+    set_silent(model)
+
+    # Parameters
+    @variable(model, p[i=1:2] ∈ MOI.Parameter.(p_val))
+
+    # Variables
+    @variable(model, x[i=1:2])
+    @variable(model, z) # >= 2.0)
+    @variable(model, w) # <= 3.0)
+    # @variable(model, f[1:2])
+
+    # Constraints
+    # @constraint(model, con1, x[2] - 0.0001 * x[1]^2 - 0.2 * z^2 - 0.3 * w^2 >= p[1] + 1)
+    @constraint(model, con2,  x[1] + 0.001 * x[2]^2 + 0.5 * w^2 + 0.4 * z^2 <= 10 * p[1] + 2)
+    @constraint(model, con3, z^2 + w^2 == 13)
+    @objective(model, Min, x[2] - x[1] + z - w)
+
+    return model, [x; z; w], [con2; con3], p
+end
+
 function eval_model_jump(model, primal_vars, cons, params, p_val)
     set_parameter_value.(params, p_val)
     optimize!(model)
@@ -256,11 +278,13 @@ function eval_model_jump(model, primal_vars, cons, params, p_val)
     return value.(primal_vars), dual.(cons), [dual.(LowerBoundRef(v)) for v in primal_vars if has_lower_bound(v)], [dual.(UpperBoundRef(v)) for v in primal_vars if has_upper_bound(v)]
 end
 
-function stack_solution(cons, ineq_locations, x, _λ, ν_L, ν_U)
-    return Float64[x; value.(get_slack_inequality.(cons[ineq_locations])); _λ; ν_L; _λ[ineq_locations]; ν_U]
+function stack_solution(cons, leq_locations, geq_locations, x, _λ, ν_L, ν_U)
+    ineq_locations = vcat(geq_locations, leq_locations)
+    return Float64[x; value.(get_slack_inequality.(cons[ineq_locations])); _λ; ν_L; _λ[geq_locations]; ν_U; _λ[leq_locations]]
 end
 
-function print_wrong_sensitive(Δs, Δs_fd, primal_vars, cons, ineq_locations)
+function print_wrong_sensitive(Δs, Δs_fd, primal_vars, cons, leq_locations, geq_locations)
+    ineq_locations = vcat(geq_locations, leq_locations)
     println("Some sensitivities are not correct: \n")
     # primal vars
     num_primal_vars = length(primal_vars)
@@ -294,9 +318,14 @@ function print_wrong_sensitive(Δs, Δs_fd, primal_vars, cons, ineq_locations)
         end
     end
     # dual lower bound slack vars
-    for (i, c) in enumerate(cons[ineq_locations])
+    for (i, c) in enumerate(cons[geq_locations])
         if !isapprox(Δs[i + num_w + num_cons + num_lower_bounds], Δs_fd[i + num_w + num_cons + num_lower_bounds] ; atol = 1e-6)
             println("lower bound slack dual: ", c, " | Δs: ", Δs[i + num_w + num_cons + num_lower_bounds], " | Δs_fd: ", Δs_fd[i + num_w + num_cons + num_lower_bounds])
+        end
+    end
+    for (i, c) in enumerate(cons[leq_locations])
+        if !isapprox(Δs[i + num_w + num_cons + num_lower_bounds + length(geq_locations)], Δs_fd[i + num_w + num_cons + num_lower_bounds + length(geq_locations)] ; atol = 1e-6)
+            println("upper bound slack dual: ", c, " | Δs: ", Δs[i + num_w + num_cons + num_lower_bounds + length(geq_locations)], " | Δs_fd: ", Δs_fd[i + num_w + num_cons + num_lower_bounds + length(geq_locations)])
         end
     end
     # dual upper bound primal vars
@@ -312,21 +341,23 @@ end
 DICT_PROBLEMS = Dict(
     "QP_JuMP" => (p_a=[1.0; 2.0; 100.0], Δp=[-0.5; 0.5; 0.1], model_generator=create_nonlinear_jump_model),
     "QP_sIpopt" => (p_a=[4.5; 1.0], Δp=[0.001; 0.0], model_generator=create_nonlinear_jump_model_sipopt),
+    "QP_sIpopt" => (p_a=[5.0; 1.0], Δp=[-0.5; 0.0], model_generator=create_nonlinear_jump_model_sipopt),
     "NLP_1" => (p_a=[3.0; 2.0; 200], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_1),
     "NLP_1_2" => (p_a=[3.0; 2.0; 200], Δp=[0.0; 0.001; 0.0], model_generator=create_nonlinear_jump_model_1),
     "NLP_1_3" => (p_a=[3.0; 2.0; 200], Δp=[0.0; 0.0; 0.001], model_generator=create_nonlinear_jump_model_1),
-    "NLP_1_4" => (p_a=[3.0; 2.0; 200], Δp=[0.001; 0.001; 0.001], model_generator=create_nonlinear_jump_model_1),
-    "NLP_1_4" => (p_a=[3.0; 2.0; 200], Δp=[0.001; -0.01; 0.001], model_generator=create_nonlinear_jump_model_1),
-    "NLP_2" => (p_a=[3.0; 2.0; 10], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_2),
-    "NLP_2_2" => (p_a=[3.0; 2.0; 10], Δp=[-0.01; 0.0; 0.0], model_generator=create_nonlinear_jump_model_2),
+    "NLP_1_4" => (p_a=[3.0; 2.0; 200], Δp=[0.1; 0.5; 0.5], model_generator=create_nonlinear_jump_model_1),
+    "NLP_1_4" => (p_a=[3.0; 2.0; 200], Δp=[0.5; -0.5; 0.1], model_generator=create_nonlinear_jump_model_1),
+    "NLP_2" => (p_a=[3.0; 2.0; 10], Δp=[0.01; 0.0; 0.0], model_generator=create_nonlinear_jump_model_2),
+    "NLP_2_2" => (p_a=[3.0; 2.0; 10], Δp=[-0.1; 0.0; 0.0], model_generator=create_nonlinear_jump_model_2),
     "NLP_3" => (p_a=[3.0; 2.0; 10], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_3),
     "NLP_3_2" => (p_a=[3.0; 2.0; 10], Δp=[0.0; 0.001; 0.0], model_generator=create_nonlinear_jump_model_3),
     "NLP_3_3" => (p_a=[3.0; 2.0; 10], Δp=[0.0; 0.0; 0.001], model_generator=create_nonlinear_jump_model_3),
-    "NLP_3_4" => (p_a=[3.0; 2.0; 10], Δp=[0.001; 0.001; 0.001], model_generator=create_nonlinear_jump_model_3),
-    "NLP_3_5" => (p_a=[3.0; 2.0; 10], Δp=[0.01; 0.03; 0.1], model_generator=create_nonlinear_jump_model_3),
-    "NLP_3_6" => (p_a=[3.0; 2.0; 10], Δp=[0.0; 0.000; -0.01], model_generator=create_nonlinear_jump_model_3),
+    "NLP_3_4" => (p_a=[3.0; 2.0; 10], Δp=[0.5; 0.001; 0.5], model_generator=create_nonlinear_jump_model_3),
+    "NLP_3_5" => (p_a=[3.0; 2.0; 10], Δp=[0.1; 0.3; 0.1], model_generator=create_nonlinear_jump_model_3),
+    "NLP_3_6" => (p_a=[3.0; 2.0; 10], Δp=[0.1; 0.2; -0.5], model_generator=create_nonlinear_jump_model_3),
     "NLP_4" => (p_a=[1.0; 2.0; 100], Δp=[0.001; 0.0; 0.0], model_generator=create_nonlinear_jump_model_4),
     "NLP_5" => (p_a=[1.0; 2.0; 100], Δp=[0.0; 0.001; 0.0], model_generator=create_nonlinear_jump_model_5),
+    "NLP_6" => (p_a=[100.0; 200.0], Δp=[0.2; 0.5], model_generator=create_nonlinear_jump_model_6),
 )
 
 function test_compute_derivatives_Finite_Diff()
@@ -335,25 +366,27 @@ function test_compute_derivatives_Finite_Diff()
         # OPT Problem
         model, primal_vars, cons, params = model_generator()
         eval_model_jump(model, primal_vars, cons, params, p_a)
+
+        println("$problem_name: ", model)
         # Compute derivatives
         # Δp = [0.001; 0.0; 0.0]
         p_b = p_a + Δp
         (Δs, sp_approx), evaluator, cons = compute_sensitivity(model, Δp; primal_vars, params)
-        ineq_locations = find_inequealities(cons)
-        # Check solution
-        # s_a = stack_solution(cons, ineq_locations, eval_model_jump(model, primal_vars, cons, params, p_a)...)
-        # sp = stack_solution(cons, ineq_locations, eval_model_jump(model, primal_vars, cons, params, p_b)...)
-        # @test all(isapprox.(sp, sp_approx; atol = 1e-6))
+        leq_locations, geq_locations = find_inequealities(cons)
         # Check derivatives using finite differences
-        ∂s_fd = FiniteDiff.finite_difference_jacobian((p) -> stack_solution(cons, ineq_locations, eval_model_jump(model, primal_vars, cons, params, p)...), p_a)
+        ∂s_fd = FiniteDiff.finite_difference_jacobian((p) -> stack_solution(cons, leq_locations, geq_locations, eval_model_jump(model, primal_vars, cons, params, p)...), p_a)
         Δs_fd = ∂s_fd * Δp
-
-        println("$problem_name: ", model)
-        if all(isapprox.(Δs, Δs_fd; atol = 1e-6))
+        # actual solution
+        sp = stack_solution(cons, leq_locations, geq_locations, eval_model_jump(model, primal_vars, cons, params, p_b)...)
+        num_important = length(primal_vars) + length(cons) + length(cons)
+        # Check sensitivities
+        if all(isapprox.(Δs, Δs_fd; atol = 1e-6)) || all(isapprox.(sp[1:num_important], sp_approx[1:num_important]; atol = 1e-6))
             println("All sensitivities are correct")
         else
             @show Δp 
-            print_wrong_sensitive(Δs, Δs_fd, primal_vars, cons, ineq_locations)
+            print_wrong_sensitive(Δs, Δs_fd, primal_vars, cons, leq_locations, geq_locations)
+            # Check solution
+            println(all(isapprox.(sp[1:num_important], sp_approx[1:num_important]; atol = 1e-6)))
         end
         println("--------------------")
     end

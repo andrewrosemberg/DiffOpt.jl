@@ -120,9 +120,23 @@ end
 
 Check if the constraint is an inequality.
 """
-function is_inequality(con::ConstraintRef)
+# function is_inequality(con::ConstraintRef)
+#     set_type = typeof(MOI.get(owner_model(con), MOI.ConstraintSet(), con))
+#     return set_type <: MOI.LessThan || set_type <: MOI.GreaterThan
+# end
+
+function is_less_inequality(con::ConstraintRef)
     set_type = typeof(MOI.get(owner_model(con), MOI.ConstraintSet(), con))
-    return set_type <: MOI.LessThan || set_type <: MOI.GreaterThan
+    return set_type <: MOI.LessThan
+end
+
+function is_greater_inequality(con::ConstraintRef)
+    set_type = typeof(MOI.get(owner_model(con), MOI.ConstraintSet(), con))
+    return set_type <: MOI.GreaterThan
+end
+
+function is_inequality(con::ConstraintRef)
+    return is_less_inequality(con) || is_greater_inequality(con)
 end
 
 """
@@ -131,13 +145,17 @@ end
 Find the indices of the inequality constraints.
 """
 function find_inequealities(cons::Vector{C}) where C<:ConstraintRef
-    ineq_locations = zeros(length(cons))
+    leq_locations = zeros(length(cons))
+    geq_locations = zeros(length(cons))
     for i in 1:length(cons)
-        if is_inequality(cons[i])
-            ineq_locations[i] = true
+        if is_less_inequality(cons[i])
+            leq_locations[i] = true
+        end
+        if is_greater_inequality(cons[i])
+            geq_locations[i] = true
         end
     end
-    return findall(x -> x ==1, ineq_locations)
+    return findall(x -> x ==1, leq_locations), findall(x -> x ==1, geq_locations)
 end
 
 """
@@ -150,7 +168,7 @@ function get_slack_inequality(con::ConstraintRef)
     obj = constraint_object(con)
     if set_type <: MOI.LessThan
         # c(x) <= b --> slack = -c(x) + b | slack >= 0
-        return - obj.func + obj.set.upper 
+        return obj.func - obj.set.upper 
     end
     return obj.func - obj.set.lower
 end
@@ -162,8 +180,11 @@ Compute the solution and bounds of the primal variables.
 """
 function compute_solution_and_bounds(primal_vars::Vector{VariableRef}, cons::Vector{C}) where {C<:ConstraintRef}
     num_vars = length(primal_vars)
-    ineq_locations = find_inequealities(cons)
-    num_ineq = length(ineq_locations)
+    leq_locations, geq_locations = find_inequealities(cons)
+    ineq_locations = vcat(geq_locations, leq_locations)
+    num_leq = length(leq_locations)
+    num_geq = length(geq_locations)
+    num_ineq = num_leq + num_geq
     slack_vars = [get_slack_inequality(cons[i]) for i in ineq_locations]
     has_up =  findall(x -> has_upper_bound(x), primal_vars)
     has_low = findall(x -> has_lower_bound(x), primal_vars)
@@ -178,7 +199,7 @@ function compute_solution_and_bounds(primal_vars::Vector{VariableRef}, cons::Vec
         V_L[i] = dual.(LowerBoundRef(primal_vars[j]))
         X_L[i] = JuMP.lower_bound(primal_vars[j])
     end
-    for (i, con) in enumerate(cons[ineq_locations])
+    for (i, con) in enumerate(cons[geq_locations])
         V_L[num_vars+i] = dual.(con)
     end
     # value and dual of the upper bounds
@@ -188,8 +209,11 @@ function compute_solution_and_bounds(primal_vars::Vector{VariableRef}, cons::Vec
         V_U[i] = dual.(UpperBoundRef(primal_vars[j]))
         X_U[i] = JuMP.upper_bound(primal_vars[j])
     end
+    for (i, con) in enumerate(cons[leq_locations])
+        V_U[num_vars+i] = dual.(con)
+    end
 
-    return X, V_L, X_L, V_U, X_U, ineq_locations, has_up, vcat(has_low, collect(num_vars+1:num_vars+num_ineq))
+    return X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, vcat(has_up, collect(num_vars+num_geq+1:num_vars+num_geq+num_leq)), vcat(has_low, collect(num_vars+1:num_vars+num_geq))
 end
 
 """
@@ -203,7 +227,7 @@ Build the M (KKT Jacobian w.r.t. solution) and N (KKT Jacobian w.r.t. parameters
 """
 function build_M_N(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef},
     primal_vars::Vector{VariableRef}, params::Vector{VariableRef}, 
-    _X::AbstractVector, _V_L::AbstractVector, _X_L::AbstractVector, _V_U::AbstractVector, _X_U::AbstractVector, ineq_locations::Vector{Z},
+    _X::AbstractVector, _V_L::AbstractVector, _X_L::AbstractVector, _V_U::AbstractVector, _X_U::AbstractVector, leq_locations::Vector{Z}, geq_locations::Vector{Z}, ineq_locations::Vector{Z},
     has_up::Vector{Z}, has_low::Vector{Z}
 ) where {Z<:Integer}
     @assert all(x -> is_parameter(x), params) "All parameters must be parameters"
@@ -247,8 +271,11 @@ function build_M_N(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRe
     # Jacobian of the constraints wrt the primal variables
     A = spzeros(num_cons, num_vars + num_ineq)
     A[:, 1:num_vars] = jacobian[:, 1:num_vars]
-    for (i,j) in enumerate(ineq_locations)
+    for (i,j) in enumerate(geq_locations)
         A[j, num_vars+i] = -1
+    end
+    for (i,j) in enumerate(leq_locations)
+        A[j, num_vars+i] = 1
     end
     # Partial second derivative of the lagrangian wrt primal solution and parameters
     ∇ₓₚL = spzeros(num_vars + num_ineq, num_parms)
@@ -296,11 +323,11 @@ Compute the derivatives of the solution w.r.t. the parameters without accounting
 """
 function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef},
     primal_vars::Vector{VariableRef}, params::Vector{VariableRef}, 
-    _X::AbstractVector, _V_L::AbstractVector, _X_L::AbstractVector, _V_U::AbstractVector, _X_U::AbstractVector, ineq_locations::Vector{Z},
+    _X::AbstractVector, _V_L::AbstractVector, _X_L::AbstractVector, _V_U::AbstractVector, _X_U::AbstractVector, leq_locations::Vector{Z}, geq_locations::Vector{Z}, ineq_locations::Vector{Z},
     has_up::Vector{Z}, has_low::Vector{Z}
 ) where {Z<:Integer}
     num_bounds = length(has_up) + length(has_low)
-    M, N = build_M_N(evaluator, cons, primal_vars, params, _X, _V_L, _X_L, _V_U, _X_U, ineq_locations, has_up, has_low)
+    M, N = build_M_N(evaluator, cons, primal_vars, params, _X, _V_L, _X_L, _V_U, _X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low)
 
     # Sesitivity of the solution (primal-dual_constraints-dual_bounds) w.r.t. the parameters
     K = lu(M) # Factorization
@@ -308,7 +335,7 @@ function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::
     # ∂s = - (K \ N) # Sensitivity
     ldiv!(∂s, K, N)
     ∂s = - ∂s
-    ∂s[end-num_bounds+1:end,:] = ∂s[end-num_bounds+1:end,:]  .* -1.0 # Correcting the sign of the bounds duals for the standard form
+    # ∂s[end-num_bounds+1:end,:] = ∂s[end-num_bounds+1:end,:]  .* -1.0 # Correcting the sign of the bounds duals for the standard form
     return ∂s, K, N
 end
 
@@ -334,7 +361,7 @@ function fix_and_relax(E, K, N, r1, Δp, num_bounds)
     aux = - (rs + E * ∆ν¯)[:,:]
     ∆s = zeros(size(K, 1), size(aux, 2))
     ldiv!(∆s, K, aux) 
-    ∆s[end-num_bounds+1:end] = ∆s[end-num_bounds+1:end] .* -1.0 # Correcting the sign of the bounds duals for the standard form
+    # ∆s[end-num_bounds+1:end] = ∆s[end-num_bounds+1:end] .* -1.0 # Correcting the sign of the bounds duals for the standard form
     return ∆s
 end
 
@@ -361,20 +388,24 @@ function find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, t
     r1 = []
     for (j, i) in enumerate(has_low)
         if sp[i] < X_L[i] - tol
+            println("Violation LB Var: ", i, " ", sp[i], " ", X_L[i])
             push!(_E, i)
             push!(r1, X[i] - X_L[i])
         end
         if sp[num_w+num_cons+j] < -tol
+            println("Violation LB Dual: ", i, " ", sp[num_w+num_cons+j], " ", V_L[i])
             push!(_E, num_w+num_cons+j)
             push!(r1, V_L[i])
         end
     end
     for (j, i) in enumerate(has_up)
         if sp[i] > X_U[i] + tol
+            println("Violation UB Var: ", i, " ", sp[i], " ", X_U[i])
             push!(_E, i)
             push!(r1, X_U[i] - X[i])
         end
-        if sp[num_w+num_cons+num_low+j] < -tol
+        if sp[num_w+num_cons+num_low+j] > tol
+            println("Violation UB Dual: ", i, " ", sp[num_w+num_cons+num_low+j], " ", V_U[i])
             push!(_E, num_w+num_cons+num_low+j)
             push!(r1, V_U[i])
         end
@@ -390,25 +421,26 @@ end
 
 
 function compute_sensitivity(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}, 
-    Δp::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model), tol=1e-8
+    Δp::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model), tol=1e-6
 ) where {T<:Real}
     num_cons = length(cons)
     # Solution and bounds
-    X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low = compute_solution_and_bounds(primal_vars, cons)
+    X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low = compute_solution_and_bounds(primal_vars, cons)
     # Compute derivatives
     # ∂s = [∂x; ∂λ; ∂ν_L; ∂ν_U]
-    ∂s, K, N = compute_derivatives_no_relax(evaluator, cons, primal_vars, params, X, V_L, X_L, V_U, X_U, ineq_locations, has_up, has_low)
+    ∂s, K, N = compute_derivatives_no_relax(evaluator, cons, primal_vars, params, X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low)
     Δs = ∂s * Δp
     Λ = dual.(cons)
     sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
     # Linearly appoximated solution
     E, r1 = find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
+    num_bounds = length(has_up) + length(has_low)
     if !isempty(r1)
         @warn "Relaxation needed"
-        num_bounds = length(has_up) + length(has_low)
         Δs = fix_and_relax(E, K, N, r1, Δp, num_bounds)
         sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
     end
+    Δs[end-num_bounds+1:end] = Δs[end-num_bounds+1:end] .* -1.0 # Correcting the sign of the bounds duals for the standard form
     return Δs, sp
 end
 
