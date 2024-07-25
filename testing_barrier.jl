@@ -23,7 +23,7 @@ test_compute_derivatives_Analytical()
 
 
 #######################
-# Test Bilevel (WIP)
+# Test Bilevel (LP)
 #######################
 
 using BilevelJuMP, Ipopt
