@@ -148,12 +148,12 @@ end
 =#
 ################################################
 
-function create_jump_model_1(p_val = 1.5)
+function create_jump_model_1(p_val = [1.5])
     model = Model(Ipopt.Optimizer)
     set_silent(model)
 
     # Parameters
-    @variable(model, p ∈ MOI.Parameter(p_val))
+    @variable(model, p ∈ MOI.Parameter(p_val[1]))
 
     # Variables
     @variable(model, x) 
@@ -166,12 +166,12 @@ function create_jump_model_1(p_val = 1.5)
     return model, [x], [con1; con2], [p]
 end
 
-function create_jump_model_2(p_val = 1.5)
+function create_jump_model_2(p_val = [1.5])
     model = Model(Ipopt.Optimizer)
     set_silent(model)
 
     # Parameters
-    @variable(model, p ∈ MOI.Parameter(p_val))
+    @variable(model, p ∈ MOI.Parameter(p_val[1]))
 
     # Variables
     @variable(model, x >= 2.0) 
@@ -183,12 +183,12 @@ function create_jump_model_2(p_val = 1.5)
     return model, [x], [con1], [p]
 end
 
-function create_jump_model_3(p_val = -1.5)
+function create_jump_model_3(p_val = [-1.5])
     model = Model(Ipopt.Optimizer)
     set_silent(model)
 
     # Parameters
-    @variable(model, p ∈ MOI.Parameter(p_val))
+    @variable(model, p ∈ MOI.Parameter(p_val[1]))
 
     # Variables
     @variable(model, x) 
@@ -203,13 +203,13 @@ end
 
 
 DICT_PROBLEMS_Analytical = Dict(
-    "geq no impact" => (p_a=1.5, Δp=[0.2], Δs_a=[0.0; -0.2; 0.0; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_1),
-    "geq active constraint change" => (p_a=1.9, Δp=[0.2], Δs_a=[0.1; -0.1; 0.1; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_1),
-    "geq impact" => (p_a=2.1, Δp=[0.2], Δs_a=[0.2; 0.0; 0.2; 0.4; 0.0; 0.4; 0.0], model_generator=create_jump_model_1),
-    "geq active bound change" => (p_a=2.1, Δp=[-0.2], Δs_a=[-0.1; 0.1; 0.0; 0.0; 0.0], model_generator=create_jump_model_2),
-    "geq bound impact" => (p_a=2.1, Δp=[0.2], Δs_a=[0.2; 0.0; 0.4; 0.0; 0.4], model_generator=create_jump_model_2),
-    "leq no impact" => (p_a=-1.5, Δp=[-0.2], Δs_a=[0.0; -2.0; 0.0; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_3),
-    "leq active constraint change" => (p_a=-1.9, Δp=[-0.2], Δs_a=[-0.1; 2.0; -0.1; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_3),
+    "geq no impact" => (p_a=[1.5], Δp=[0.2], Δs_a=[0.0; -0.2; 0.0; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_1),
+    "geq active constraint change" => (p_a=[1.9], Δp=[0.2], Δs_a=[0.1; -0.1; 0.1; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_1),
+    "geq impact" => (p_a=[2.1], Δp=[0.2], Δs_a=[0.2; 0.0; 0.2; 0.4; 0.0; 0.4; 0.0], model_generator=create_jump_model_1),
+    "geq active bound change" => (p_a=[2.1], Δp=[-0.2], Δs_a=[-0.1; 0.1; 0.0; 0.0; 0.0], model_generator=create_jump_model_2),
+    "geq bound impact" => (p_a=[2.1], Δp=[0.2], Δs_a=[0.2; 0.0; 0.4; 0.0; 0.4], model_generator=create_jump_model_2),
+    "leq no impact" => (p_a=[-1.5], Δp=[-0.2], Δs_a=[0.0; -2.0; 0.0; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_3),
+    "leq active constraint change" => (p_a=[-1.9], Δp=[-0.2], Δs_a=[-0.1; -0.1; -0.1; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_3),
 )
 
 function test_compute_derivatives_Analytical()
@@ -452,7 +452,7 @@ function test_compute_derivatives_Finite_Diff()
         println("$problem_name: ", model)
         # Compute derivatives
         # Δp = [0.001; 0.0; 0.0]
-        p_b = p_a + Δp
+        p_b = p_a .+ Δp
         (Δs, sp_approx), evaluator, cons = compute_sensitivity(model, Δp; primal_vars, params)
         leq_locations, geq_locations = find_inequealities(cons)
         # Check derivatives using finite differences

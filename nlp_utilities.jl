@@ -424,6 +424,7 @@ function compute_sensitivity(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     Δp::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model), tol=1e-6
 ) where {T<:Real}
     num_cons = length(cons)
+    num_var = length(primal_vars)
     # Solution and bounds
     X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low = compute_solution_and_bounds(primal_vars, cons)
     # Compute derivatives
@@ -431,6 +432,9 @@ function compute_sensitivity(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     ∂s, K, N = compute_derivatives_no_relax(evaluator, cons, primal_vars, params, X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low)
     Δs = ∂s * Δp
     Λ = dual.(cons)
+    for i in leq_locations # slack of leq constraints
+        Δs[num_var+i] = - Δs[num_var+i]
+    end
     sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
     # Linearly appoximated solution
     E, r1 = find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
@@ -441,6 +445,9 @@ function compute_sensitivity(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
         sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
     end
     Δs[end-num_bounds+1:end] = Δs[end-num_bounds+1:end] .* -1.0 # Correcting the sign of the bounds duals for the standard form
+    for i in leq_locations # slack of leq constraints
+        Δs[num_var+i] = - Δs[num_var+i]
+    end
     return Δs, sp
 end
 
