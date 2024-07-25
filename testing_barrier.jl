@@ -19,6 +19,8 @@ test_compute_derivatives()
 
 test_compute_derivatives_Finite_Diff()
 
+test_compute_derivatives_Analytical()
+
 
 #######################
 # Test Bilevel (WIP)

@@ -144,6 +144,89 @@ end
 
 ################################################
 #=
+# Test Sensitivity through analytical
+=#
+################################################
+
+function create_jump_model_1(p_val = 1.5)
+    model = Model(Ipopt.Optimizer)
+    set_silent(model)
+
+    # Parameters
+    @variable(model, p ∈ MOI.Parameter(p_val))
+
+    # Variables
+    @variable(model, x) 
+
+    # Constraints
+    @constraint(model, con1, x >= p)
+    @constraint(model, con2, x >= 2)
+    @objective(model, Min, x^2)
+
+    return model, [x], [con1; con2], [p]
+end
+
+function create_jump_model_2(p_val = 1.5)
+    model = Model(Ipopt.Optimizer)
+    set_silent(model)
+
+    # Parameters
+    @variable(model, p ∈ MOI.Parameter(p_val))
+
+    # Variables
+    @variable(model, x >= 2.0) 
+
+    # Constraints
+    @constraint(model, con1, x >= p)
+    @objective(model, Min, x^2)
+
+    return model, [x], [con1], [p]
+end
+
+function create_jump_model_3(p_val = 1.5)
+    model = Model(Ipopt.Optimizer)
+    set_silent(model)
+
+    # Parameters
+    @variable(model, p ∈ MOI.Parameter(p_val))
+
+    # Variables
+    @variable(model, x) 
+
+    # Constraints
+    @constraint(model, con1, x <= p)
+    @constraint(model, con2, x <= 2)
+    @objective(model, Min, -x^2)
+
+    return model, [x], [con1; con2], [p]
+end
+
+
+DICT_PROBLEMS_Analytical = Dict(
+    "geq no impact" => (p_a=1.5, Δp=[0.2], Δs_a=[0.0; -0.2; 0.0; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_1),
+    "geq active constraint change" => (p_a=1.9, Δp=[0.2], Δs_a=[0.1; -0.1; 0.1; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_1),
+    "geq impact" => (p_a=2.1, Δp=[0.2], Δs_a=[0.2; 0.0; 0.2; 0.4; 0.0; 0.4; 0.0], model_generator=create_jump_model_1),
+    "geq active bound change" => (p_a=2.1, Δp=[-0.2], Δs_a=[-0.1; 0.1; 0.0; 0.0; 0.0], model_generator=create_jump_model_2),
+    "get bound impact" => (p_a=2.1, Δp=[0.2], Δs_a=[0.2; 0.0; 0.4; 0.0; 0.4], model_generator=create_jump_model_1),
+    "leq no impact" => (p_a=1.5, Δp=[0.2], Δs_a=[0.0; 0.0; 0.0; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_3),
+)
+
+function test_compute_derivatives_Analytical()
+    @testset "Compute Derivatives Analytical" begin
+        for (problem_name, (p_a, Δp, Δs_a, model_generator)) in DICT_PROBLEMS_Analytical
+            # OPT Problem
+            model, primal_vars, cons, params = model_generator()
+            eval_model_jump(model, primal_vars, cons, params, p_a)
+            # Compute derivatives
+            (Δs, sp_approx), evaluator, cons = compute_sensitivity(model, Δp; primal_vars, params)
+            # Check sensitivities
+            @test all(isapprox.(Δs, Δs_a; atol = 1e-6))
+        end
+    end
+end
+
+################################################
+#=
 # Test Sensitivity through finite differences
 =#
 ################################################
