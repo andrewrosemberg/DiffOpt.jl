@@ -345,7 +345,7 @@ function create_nonlinear_jump_model_6(p_val = [100.0; 200.0])
     # @variable(model, f[1:2])
 
     # Constraints
-    # @constraint(model, con1, x[2] - 0.0001 * x[1]^2 - 0.2 * z^2 - 0.3 * w^2 >= p[1] + 1)
+    @constraint(model, con1, x[2] - 0.0001 * x[1]^2 - 0.2 * z^2 - 0.3 * w^2 >= p[1] + 1)
     @constraint(model, con2,  x[1] + 0.001 * x[2]^2 + 0.5 * w^2 + 0.4 * z^2 <= 10 * p[1] + 2)
     @constraint(model, con3, z^2 + w^2 == 13)
     @objective(model, Min, x[2] - x[1] + z - w)

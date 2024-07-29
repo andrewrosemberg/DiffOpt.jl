@@ -335,7 +335,7 @@ function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::
     # ∂s = - (K \ N) # Sensitivity
     ldiv!(∂s, K, N)
     ∂s = - ∂s
-    # ∂s[end-num_bounds+1:end,:] = ∂s[end-num_bounds+1:end,:]  .* -1.0 # Correcting the sign of the bounds duals for the standard form
+    
     return ∂s, K, N
 end
 
@@ -361,7 +361,7 @@ function fix_and_relax(E, K, N, r1, Δp, num_bounds)
     aux = - (rs + E * ∆ν¯)[:,:]
     ∆s = zeros(size(K, 1), size(aux, 2))
     ldiv!(∆s, K, aux) 
-    # ∆s[end-num_bounds+1:end] = ∆s[end-num_bounds+1:end] .* -1.0 # Correcting the sign of the bounds duals for the standard form
+
     return ∆s
 end
 
