@@ -431,22 +431,23 @@ function compute_sensitivity(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     # ∂s = [∂x; ∂λ; ∂ν_L; ∂ν_U]
     ∂s, K, N = compute_derivatives_no_relax(evaluator, cons, primal_vars, params, X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low)
     Δs = ∂s * Δp
+    num_bounds = length(has_up) + length(has_low)
     Λ = dual.(cons)
     for i in leq_locations # slack of leq constraints
         Δs[num_var+i] = - Δs[num_var+i]
     end
+    Δs[end-num_bounds+1:end] = Δs[end-num_bounds+1:end] .* -1.0 # Correcting the sign of the bounds duals for the standard form
     sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
     # Linearly appoximated solution
     E, r1 = find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
-    num_bounds = length(has_up) + length(has_low)
     if !isempty(r1)
         @warn "Relaxation needed"
         Δs = fix_and_relax(E, K, N, r1, Δp, num_bounds)
+        for i in leq_locations # slack of leq constraints
+            Δs[num_var+i] = - Δs[num_var+i]
+        end
+        Δs[end-num_bounds+1:end] = Δs[end-num_bounds+1:end] .* -1.0 # Correcting the sign of the bounds duals for the standard form
         sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
-    end
-    Δs[end-num_bounds+1:end] = Δs[end-num_bounds+1:end] .* -1.0 # Correcting the sign of the bounds duals for the standard form
-    for i in leq_locations # slack of leq constraints
-        Δs[num_var+i] = - Δs[num_var+i]
     end
     return Δs, sp
 end
