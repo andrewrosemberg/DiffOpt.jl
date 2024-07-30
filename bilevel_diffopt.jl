@@ -185,3 +185,113 @@ function test_bilevel_nonlinear()
     @test value(x) ≈ 2.0 atol=0.05
     @test value(y) ≈ 3.0 atol=0.05
 end
+
+################################################
+#=
+# Test Stratigic Bidding
+=#
+################################################
+
+function build_lower()
+    lower_model = Model(Ipopt.Optimizer)
+
+    @variable(lower_model, qS_p ∈ MOI.Parameter(1.0))
+    @variable(lower_model, 0 <= gS <= 100)
+    @variable(lower_model, 0 <= gR1 <= 40)
+    @variable(lower_model, 0 <= gR2 <= 40)
+    @variable(lower_model, 0 <= gD <= 100)
+    @objective(lower_model, Min, 0.5gR1^2 + 1gR2^2 + 2gD^2)
+    @constraint(lower_model, bid, gS <= qS_p)
+    @constraint(lower_model, demand_equilibrium, gS + gR1 + gR2 + gD == 100)
+    primal_vars = [gS; gR1; gR2; gD]
+    params = [qS_p]
+    return lower_model, qS_p, demand_equilibrium, primal_vars, params
+end
+
+function build_upper()
+    upper_model = Model(Ipopt.Optimizer)
+
+    @variable(upper_model, 0 <= qS <= 100)
+    @variable(upper_model, lambda)
+    @objective(upper_model, Max, lambda*qS)
+    return upper_model, lambda, qS
+end
+
+# test derivative of the dual of the demand equilibrium constraint
+
+lower_model, qS_p, demand_equilibrium, primal_vars, params = build_lower()
+upper_model, lambda, qS = build_upper()
+
+optimize!(lower_model)
+
+evaluator, cons = create_evaluator(lower_model; x=[primal_vars; params])
+Δs, sp = compute_sensitivity(evaluator, cons, [0.5]; primal_vars=primal_vars, params=params)
+
+set_parameter_value(qS_p, 1.5)
+
+optimize!(lower_model)
+
+@test dual(demand_equilibrium) ≈ sp[6]
+@test dual(bid) ≈ sp[7]
+
+# test bilevel strategic bidding
+
+lower_model, qS_p, demand_equilibrium, primal_vars, params = build_lower()
+upper_model, lambda, qS = build_upper()
+
+evaluator, cons = create_evaluator(lower_model; x=[primal_vars; params])
+
+function f(qS_val)
+    set_parameter_value(qS_p, qS_val)
+    optimize!(lower_model)
+    @assert is_solved_and_feasible(lower_model)
+    return dual(demand_equilibrium)
+end
+
+function ∇f(qS_val)
+    @assert value(qS_p) == qS_val
+    Δs, sp = compute_sensitivity(evaluator, cons, [0.001]; primal_vars=primal_vars, params=params)
+    return Δs[6]
+end
+
+memoized_f = memoize(f)
+
+@operator(upper_model, op_f, 1, memoized_f, ∇f)
+
+@constraint(upper_model, lambda == op_f(qS))
+
+# 0.68s
+@time optimize!(upper_model)
+
+@test objective_value(upper_model) ≈ 0.00508
+
+###### no derivative
+
+lower_model, qS_p, demand_equilibrium, primal_vars, params = build_lower()
+upper_model, lambda, qS = build_upper()
+
+evaluator, cons = create_evaluator(lower_model; x=[primal_vars; params])
+
+function f(qS_val)
+    set_parameter_value(qS_p, qS_val)
+    optimize!(lower_model)
+    @assert is_solved_and_feasible(lower_model)
+    return dual(demand_equilibrium)
+end
+
+function ∇f(qS_val)
+    @assert value(qS_p) == qS_val
+    Δs, sp = compute_sensitivity(evaluator, cons, [0.00]; primal_vars=primal_vars, params=params)
+    return Δs[6]
+end
+
+memoized_f = memoize(f)
+
+@operator(upper_model, op_f, 1, memoized_f, ∇f)
+
+@constraint(upper_model, lambda == op_f(qS))
+
+# 1.41s
+@time optimize!(upper_model)
+
+@test objective_value(upper_model) ≈ 0.00508
