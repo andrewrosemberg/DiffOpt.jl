@@ -312,6 +312,20 @@ function build_M_N(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRe
     return M, N
 end
 
+function inertia_corrector_factorization(M; st=1e-6)
+    # Factorization
+    K = lu(M; check=false)
+    # Inertia correction
+    status = K.status
+    while status == 1  
+        println("Inertia correction")
+        M = M + st * I(size(M, 1))
+        K = lu(M; check=false)
+        status = K.status
+    end
+    return K
+end
+
 """
     compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef},
         primal_vars::Vector{VariableRef}, params::Vector{VariableRef},
@@ -330,7 +344,7 @@ function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::
     M, N = build_M_N(evaluator, cons, primal_vars, params, _X, _V_L, _X_L, _V_U, _X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low)
 
     # Sesitivity of the solution (primal-dual_constraints-dual_bounds) w.r.t. the parameters
-    K = lu(M) # Factorization
+    K = inertia_corrector_factorization(M) # Factorization
     ∂s = zeros(size(M, 1), size(N, 2))
     # ∂s = - (K \ N) # Sensitivity
     ldiv!(∂s, K, N)
