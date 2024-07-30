@@ -384,8 +384,19 @@ end
 
 First order approximation the primal-dual solution.
 """
-function approximate_solution(X, Λ, V_L, V_U, Δs)
-    return [X; Λ; V_L; V_U] .+ Δs
+function approximate_solution(X::Vector{T}, Λ, V_L, V_U, Δs) where T
+    num_var = length(X)
+    num_cons = length(Λ)
+    num_low = length(V_L)
+    num_up = length(V_U)
+    sp = Vector{T}(undef, num_var + num_cons + num_low + num_up)
+    sp[1:num_var] = X
+    sp[num_var+1:num_var+num_cons] = Λ
+    sp[num_var+num_cons+1:num_var+num_cons+num_low] = V_L
+    sp[num_var+num_cons+num_low+1:num_var+num_cons+num_low+num_up] = V_U
+    sp = sp + Δs
+
+    return sp
 end
 
 """
