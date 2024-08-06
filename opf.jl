@@ -33,7 +33,7 @@ function build_gen(gen_bus, id, pmax, qmax)
     )
 end
 
-function build_opf(case_name; percen_bidding_nodes=0.1)
+function build_opf_model(case_name; percen_bidding_nodes=0.1)
     data = make_basic_network(pglib(case_name))
     data["basic_network"] = false
     # add bidding generators
@@ -66,7 +66,7 @@ function build_opf(case_name; percen_bidding_nodes=0.1)
     JuMP.@variable(model, ref[:gen][i]["qmin"] <= qg[i in keys(ref[:gen])] <= ref[:gen][i]["qmax"])
 
     # add bids
-    JuMP.@variable(model, pg_bid[i in bidding_gen_ids] ∈ MOI.Parameter.(1.0))
+    JuMP.@variable(model, pg_bid[i in bidding_gen_ids] ∈ MOI.Parameter.(pmax * 0.5))
     @constraint(model, bid[i in bidding_gen_ids], pg[i] <= pg_bid[i])
 
     for i in keys(ref[:gen])
@@ -104,7 +104,7 @@ function build_opf(case_name; percen_bidding_nodes=0.1)
             sum(shunt["bs"] for shunt in bus_shunts)*vm[i]^2
         )
 
-        demand_equilibrium[bus] = active_balance
+        demand_equilibrium[i] = active_balance
     end
 
     # Branch power flow physics and limit constraints
@@ -153,19 +153,24 @@ function build_opf(case_name; percen_bidding_nodes=0.1)
 
     println("")
     println("\033[1mSummary\033[0m")
-    println("   case........: $(file_name)")
+    println("   case........: $(case_name)")
     println("   variables...: $(model_variables)")
     println("   constraints.: $(model_constraints)")
 
     println("")
 
+    bidding_generators_dispatch = [pg[i] for i in bidding_gen_ids]
+    _pg_bid = [pg_bid[i] for i in bidding_gen_ids]
+    all_primal_variables = all_variables(model)
+    remaining_vars = setdiff(all_primal_variables, bidding_generators_dispatch)
+    remaining_vars = setdiff(remaining_vars, _pg_bid)
     return Dict(
-        "case" => file_name,
-        "model_variables" => model_variables,
-        "bidding_generators_dispatch" => [pg[i] for i in bidding_gen_ids],
+        "case" => case_name,
+        "model_variables" => remaining_vars,
+        "bidding_generators_dispatch" => bidding_generators_dispatch,
         "bidding_lmps" => [demand_equilibrium[i] for i in bidding_nodes],
         "model" => model,
-        "bid" => [pg_bid[i] for i in bidding_gen_ids],
+        "bid" => _pg_bid,
         "pmax" => pmax,
     )
 end
@@ -174,7 +179,80 @@ function build_bidding_upper(num_bidding_nodes, pmax)
     upper_model = Model(Ipopt.Optimizer)
 
     @variable(upper_model, 0 <= pg_bid[i=1:num_bidding_nodes] <= pmax)
+    @variable(upper_model, pg[i=1:num_bidding_nodes])
     @variable(upper_model, lambda[i=1:num_bidding_nodes])
-    @objective(upper_model, Max, dot(lambda, pg_bid))
-    return upper_model, lambda, pg_bid
+    @objective(upper_model, Max, dot(lambda, pg))
+    return upper_model, lambda, pg_bid, pg
+end
+
+function memoize(foo::Function, n_outputs::Int)
+    last_x, last_f = nothing, nothing
+    last_dx, last_dfdx = nothing, nothing
+    function foo_i(i, x...)
+        if x !== last_x
+            last_x, last_f = x, foo(x...)
+        end
+        return last_f[i]
+    end
+    return [(x...) -> foo_i(i, x...) for i in 1:n_outputs]
+end
+
+function test_bilevel_ac_strategic_bidding()
+    # test derivative of the dual of the demand equilibrium constraint
+    data = build_opf_model("case14")
+    pmax = data["pmax"]
+    primal_vars = [data["bidding_generators_dispatch"]; data["model_variables"]]
+    num_bidding_nodes = length(data["bidding_generators_dispatch"])
+    set_parameter_value.(data["bid"], 0.5)
+    optimize!(data["model"])
+    evaluator, cons = create_evaluator(data["model"]; x=[primal_vars; data["bid"]])
+    leq_locations, geq_locations = find_inequealities(cons)
+    num_ineq = length(leq_locations) + length(geq_locations)
+    bidding_lmps_index = findall(x -> x in data["bidding_lmps"], cons)
+    Δp = rand(-pmax*0.1:0.001:pmax*0.1, num_bidding_nodes)
+    Δs, sp = compute_sensitivity(evaluator, cons, Δp; primal_vars=primal_vars, params=data["bid"])
+    
+    set_parameter_value.(data["bid"], 0.5 .+ Δp)
+    optimize!(data["model"])
+
+    @test dual.(data["bidding_lmps"]) ≈ Δs[(length(primal_vars) + num_ineq) .+ bidding_lmps_index]
+
+    # test bilevel strategic bidding
+    upper_model, lambda, pg_bid, pg = build_bidding_upper(num_bidding_nodes, pmax)
+    evaluator, cons = create_evaluator(data["model"]; x=[primal_vars; data["bid"]])
+
+    function f(pg_bid_val...)
+        set_parameter_value.(data["bid"], pg_bid_val)
+        optimize!(data["model"])
+        @assert is_solved_and_feasible(data["model"])
+        return [value.(data["bidding_generators_dispatch"]); -dual.(data["bidding_lmps"])]
+    end
+
+    function ∇f(pg_bid_val...)
+        if value.(data["bid"]) == pg_bid_val
+            set_parameter_value.(data["bid"], pg_bid_val)
+            optimize!(data["model"])
+            @assert is_solved_and_feasible(data["model"])
+        end
+        Δs, sp = compute_sensitivity(evaluator, cons, fill(0.001, num_bidding_nodes); primal_vars=primal_vars, params=data["bid"])
+        return [Δs[1:num_bidding_nodes]; -(Δs[(length(primal_vars) + num_ineq) .+ bidding_lmps_index])]
+    end
+
+    memoized_f = memoize(f, 2 * num_bidding_nodes)
+    memoized_∇f = memoize(∇f, 2 * num_bidding_nodes)
+    for i in 1:num_bidding_nodes
+        op_pg = add_nonlinear_operator(upper_model, num_bidding_nodes, memoized_f[i], memoized_∇f[i]; name = Symbol("op_pg_$i"))
+        @constraint(upper_model, pg[i] == op_pg(pg_bid...))
+    end
+
+    for i in 1:num_bidding_nodes
+        op_lambda = add_nonlinear_operator(upper_model, num_bidding_nodes, memoized_f[num_bidding_nodes + i], memoized_∇f[num_bidding_nodes + i]; name = Symbol("op_lambda_$i"))
+        @constraint(upper_model, lambda[i] == op_lambda(pg_bid...))
+    end
+
+    optimize!(upper_model)
+
+    @test objective_value(upper_model) ≈ 0.0 rtol=1e-2
+
+
 end

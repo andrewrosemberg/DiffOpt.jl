@@ -217,8 +217,8 @@ function build_upper()
     return upper_model, lambda, qS
 end
 
-# test derivative of the dual of the demand equilibrium constraint
 function test_bilevel_strategic_bidding()
+    # test derivative of the dual of the demand equilibrium constraint
     lower_model, qS_p, demand_equilibrium, primal_vars, params, bid = build_lower()
     upper_model, lambda, qS = build_upper()
 
