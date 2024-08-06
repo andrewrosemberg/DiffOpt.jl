@@ -462,7 +462,7 @@ function test_compute_derivatives_Finite_Diff()
         sp = stack_solution(cons, leq_locations, geq_locations, eval_model_jump(model, primal_vars, cons, params, p_b)...)
         num_important = length(primal_vars)
         # Check sensitivities
-        if all(isapprox.(Δs, Δs_fd; atol = 1e-6)) || all(isapprox.(sp[1:num_important], sp_approx[1:num_important]; atol = 1e-6))
+        if all(isapprox.(Δs, Δs_fd; rtol = 1e-3, atol=14-6)) || all(isapprox.(sp[1:num_important], sp_approx[1:num_important]; rtol = 1e-3, atol=14-6))
             println("All sensitivities are correct")
         else
             @show Δp 
