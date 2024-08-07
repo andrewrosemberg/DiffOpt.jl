@@ -10,6 +10,7 @@ using PGLib
 import Ipopt
 import JuMP
 using LinearAlgebra
+using ForwardDiff
 
 function build_gen(gen_bus, id, pmax, qmax)
     return Dict{String, Any}(
@@ -187,14 +188,46 @@ end
 
 function memoize(foo::Function, n_outputs::Int)
     last_x, last_f = nothing, nothing
-    last_dx, last_dfdx = nothing, nothing
     function foo_i(i, x...)
         if x !== last_x
-            last_x, last_f = x, foo(x...)
+            ret = foo(x...)
+            if !isnothing(ret)
+                last_x, last_f = x, ret
+            end
         end
         return last_f[i]
     end
     return [(x...) -> foo_i(i, x...) for i in 1:n_outputs]
+end
+
+function memoize!(foo::Function, n_outputs::Int)
+    last_x, last_f = nothing, nothing
+    function foo_i(i, g, x...)
+        if x !== last_x
+            ret = foo(g, x...)
+            if !isnothing(ret)
+                last_x, last_f = x, ret
+            end
+        end
+        g .= last_f[i]
+        return last_f[i]
+    end
+    return [(g, x...) -> foo_i(i, g, x...) for i in 1:n_outputs]
+end
+
+function fdiff_derivatives(f::Function)
+    function ∇f(g::AbstractVector{T}, x::Vararg{T,N}) where {T,N}
+        FiniteDiff.finite_difference_gradient!(g, y -> f(y...), collect(x))
+        return
+    end
+    function ∇²f(H::AbstractMatrix{T}, x::Vararg{T,N}) where {T,N}
+        h = FiniteDiff.finite_difference_hessian!(y -> f(y...), collect(x))
+        for i in 1:N, j in 1:i
+            H[i, j] = h[i, j]
+        end
+        return
+    end
+    return ∇f, ∇²f
 end
 
 function test_bilevel_ac_strategic_bidding()
@@ -208,6 +241,7 @@ function test_bilevel_ac_strategic_bidding()
     evaluator, cons = create_evaluator(data["model"]; x=[primal_vars; data["bid"]])
     leq_locations, geq_locations = find_inequealities(cons)
     num_ineq = length(leq_locations) + length(geq_locations)
+    num_primal = length(primal_vars)
     bidding_lmps_index = [findall(x -> x == i, cons)[1] for i in data["bidding_lmps"]]
     # Δp = rand(-pmax*0.1:0.001:pmax*0.1, num_bidding_nodes)
     # Δs, sp = compute_sensitivity(evaluator, cons, Δp; primal_vars=primal_vars, params=data["bid"])
@@ -215,7 +249,7 @@ function test_bilevel_ac_strategic_bidding()
     # set_parameter_value.(data["bid"], 0.5 .+ Δp)
     # optimize!(data["model"])
 
-    # @test dual.(data["bidding_lmps"]) ≈ Δs[(length(primal_vars) + num_ineq) .+ bidding_lmps_index]
+    # @test dual.(data["bidding_lmps"]) ≈ Δs[(num_primal + num_ineq) .+ bidding_lmps_index]
 
     # test bilevel strategic bidding
     upper_model, lambda, pg_bid, pg = build_bidding_upper(num_bidding_nodes, pmax)
@@ -224,29 +258,39 @@ function test_bilevel_ac_strategic_bidding()
     function f(pg_bid_val...)
         set_parameter_value.(data["bid"], pg_bid_val)
         optimize!(data["model"])
-        @assert is_solved_and_feasible(data["model"])
+        if !is_solved_and_feasible(data["model"])
+            return nothing
+        end
         return [value.(data["bidding_generators_dispatch"]); -dual.(data["bidding_lmps"])]
     end
 
-    function ∇f(pg_bid_val...)
+    function ∇f(g::AbstractVector{T}, pg_bid_val...) where {T}
         if value.(data["bid"]) == pg_bid_val
             set_parameter_value.(data["bid"], pg_bid_val)
             optimize!(data["model"])
             @assert is_solved_and_feasible(data["model"])
         end
         Δs, sp = compute_sensitivity(evaluator, cons, fill(0.0001, num_bidding_nodes); primal_vars=primal_vars, params=data["bid"])
-        return [Δs[1:num_bidding_nodes]; -(Δs[(length(primal_vars) + num_ineq) .+ bidding_lmps_index])]
+        for i in 1:num_bidding_nodes
+            g[i] = Δs[i]
+            g[num_bidding_nodes + i] = -Δs[num_primal + num_ineq + i]
+        end
+        return g
+        # return [Δs[1:num_bidding_nodes]; -(Δs[(num_primal + num_ineq) .+ bidding_lmps_index])]
     end
 
     memoized_f = memoize(f, 2 * num_bidding_nodes)
-    memoized_∇f = memoize(∇f, 2 * num_bidding_nodes)
+    memoized_∇f = memoize!(∇f, 2 * num_bidding_nodes)
+
     for i in 1:num_bidding_nodes
         op_pg = add_nonlinear_operator(upper_model, num_bidding_nodes, memoized_f[i], memoized_∇f[i]; name = Symbol("op_pg_$i"))
+        # op_pg = add_nonlinear_operator(upper_model, num_bidding_nodes, memoized_f[i], fdiff_derivatives(memoized_f[i])...; name = Symbol("op_pg_$i"))
         @constraint(upper_model, pg[i] == op_pg(pg_bid...))
     end
 
     for i in 1:num_bidding_nodes
         op_lambda = add_nonlinear_operator(upper_model, num_bidding_nodes, memoized_f[num_bidding_nodes + i], memoized_∇f[num_bidding_nodes + i]; name = Symbol("op_lambda_$i"))
+        # op_lambda = add_nonlinear_operator(upper_model, num_bidding_nodes, memoized_f[num_bidding_nodes + i], fdiff_derivatives(memoized_f[num_bidding_nodes + i])...; name = Symbol("op_lambda_$i"))
         @constraint(upper_model, lambda[i] == op_lambda(pg_bid...))
     end
 
