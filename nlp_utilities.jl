@@ -312,15 +312,18 @@ function build_M_N(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRe
     return M, N
 end
 
-function inertia_corrector_factorization(M::SparseMatrixCSC; st=1e-6, max_corrections=10)
+function inertia_corrector_factorization(M::SparseMatrixCSC, num_w, num_cons; st=1e-6, max_corrections=50)
     # Factorization
     K = lu(M; check=false)
     # Inertia correction
     status = K.status
     num_c = 0
+    diag_mat = ones(size(M, 1))
+    diag_mat[num_w+1:num_w+num_cons] .= -1
+    diag_mat = sparse(diagm(diag_mat))
     while status == 1 && num_c < max_corrections
         println("Inertia correction")
-        M = M + st * I(size(M, 1))
+        M = M + st * diag_mat
         K = lu(M; check=false)
         status = K.status
         num_c += 1
@@ -332,7 +335,7 @@ function inertia_corrector_factorization(M::SparseMatrixCSC; st=1e-6, max_correc
     return K
 end
 
-function inertia_corrector_factorization(M; st=1e-6, max_corrections=10)
+function inertia_corrector_factorization(M; st=1e-6, max_corrections=50)
     num_c = 0
     if cond(M) > 1/st
         @warn "Inertia correction"
@@ -368,7 +371,7 @@ function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::
     M, N = build_M_N(evaluator, cons, primal_vars, params, _X, _V_L, _X_L, _V_U, _X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low)
 
     # Sesitivity of the solution (primal-dual_constraints-dual_bounds) w.r.t. the parameters
-    K = inertia_corrector_factorization(M) # Factorization
+    K = inertia_corrector_factorization(M, length(primal_vars) + length(ineq_locations), length(cons)) # Factorization
     if isnothing(K)
         return zeros(size(M, 1), size(N, 2)), K, N
     end
@@ -381,11 +384,11 @@ function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::
 end
 
 """
-    fix_and_relax(E, K, N, r1, Δp, num_bounds)
+    fix_and_relax(E, K, N, r1, Δp, num_w, num_cons)
 
 Fix the violations and relax complementary slackness.
 """
-function fix_and_relax(E, K, N, r1, Δp, num_bounds)
+function fix_and_relax(E, K, N, r1, Δp)
     rs = (N * Δp)[:,:]
     # C = −E' inv(K) E
     # C = - E' * (K \ E)
@@ -500,7 +503,7 @@ function compute_sensitivity(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     E, r1 = find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
     if !isempty(r1)
         @warn "Relaxation needed"
-        Δs = fix_and_relax(E, K, N, r1, Δp, num_bounds)
+        Δs = fix_and_relax(E, K, N, r1, Δp)
         for i in 1:num_leq # slack of leq constraints
             Δs[num_var+num_geq+i] = - Δs[num_var+num_geq+i]
         end
