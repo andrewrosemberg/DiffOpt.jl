@@ -230,9 +230,9 @@ function fdiff_derivatives(f::Function)
     return ∇f, ∇²f
 end
 
-function test_bilevel_ac_strategic_bidding()
+function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; percen_bidding_nodes=0.1)
     # test derivative of the dual of the demand equilibrium constraint
-    data = build_opf_model("case14")
+    data = build_opf_model(case_name; percen_bidding_nodes=percen_bidding_nodes)
     pmax = data["pmax"]
     primal_vars = [data["bidding_generators_dispatch"]; data["model_variables"]]
     num_bidding_nodes = length(data["bidding_generators_dispatch"])
@@ -296,7 +296,9 @@ function test_bilevel_ac_strategic_bidding()
 
     optimize!(upper_model)
 
-    objective_value(upper_model)
-
-
+    println("Status: ", termination_status(upper_model))
+    println("Objective: ", objective_value(upper_model))
+    println("Duals: ", value.(lambda))
+    println("Bids: ", value.(pg_bid))
+    println("Dispatch: ", value.(pg))
 end

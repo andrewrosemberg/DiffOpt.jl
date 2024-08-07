@@ -11,6 +11,7 @@ using Ipopt
 
 include("nlp_utilities.jl")
 include("nlp_utilities_test.jl")
+include("opf.jl")
 
 
 test_compute_optimal_hess_jacobian()
@@ -21,6 +22,7 @@ test_compute_derivatives_Finite_Diff()
 
 test_compute_derivatives_Analytical()
 
+test_bilevel_ac_strategic_bidding("pglib_opf_case5_pjm.m"; percen_bidding_nodes=0.5)
 
 #######################
 # Test Bilevel (LP)
