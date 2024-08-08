@@ -286,7 +286,7 @@ function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; pe
     end
 
     memoized_f = memoize(f, 2 * num_bidding_nodes)
-    memoized_∇f = memoize!(∇f, 2 * num_bidding_nodes)
+    memoized_∇f = !isnothing(Δp) && iszero(Δp) ? [(args...) -> nothing for i in 1:2 * num_bidding_nodes] : memoize!(∇f, 2 * num_bidding_nodes)
 
     for i in 1:num_bidding_nodes
         op_pg = add_nonlinear_operator(upper_model, num_bidding_nodes, memoized_f[i], memoized_∇f[i]; name = Symbol("op_pg_$i"))
