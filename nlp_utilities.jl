@@ -480,8 +480,8 @@ end
 
 
 function compute_sensitivity(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}, 
-    Δp::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model), tol=1e-6
-) where {T<:Real}
+    Δp; primal_vars=all_primal_vars(model), params=all_params(model), tol=1e-6
+)
     num_cons = length(cons)
     num_var = length(primal_vars)
     # Solution and bounds
@@ -489,6 +489,12 @@ function compute_sensitivity(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     # Compute derivatives
     # ∂s = [∂x; ∂λ; ∂ν_L; ∂ν_U]
     ∂s, K, N = compute_derivatives_no_relax(evaluator, cons, primal_vars, params, X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low)
+    if isnothing(Δp) || iszero(Δp)
+        Λ = dual.(cons)
+        Δs = ∂s * ones(size(∂s, 2))
+        sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
+        return Δs, sp
+    end
     Δs = ∂s * Δp
     num_bounds = length(has_up) + length(has_low)
     Λ = dual.(cons)
@@ -518,7 +524,7 @@ end
 
 Compute the sensitivity of the solution given sensitivity of the parameters (Δp).
 """
-function compute_sensitivity(model::Model, Δp::Vector{T}; primal_vars=all_primal_vars(model), params=all_params(model)) where {T<:Real}
+function compute_sensitivity(model::Model, Δp; primal_vars=all_primal_vars(model), params=all_params(model))
     evaluator, cons = create_evaluator(model; x=[primal_vars; params])
     return compute_sensitivity(evaluator, cons, Δp; primal_vars=primal_vars, params=params), evaluator, cons
 end

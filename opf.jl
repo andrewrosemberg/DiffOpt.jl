@@ -230,7 +230,7 @@ function fdiff_derivatives(f::Function)
     return ∇f, ∇²f
 end
 
-function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; percen_bidding_nodes=0.1)
+function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; percen_bidding_nodes=0.1, Δp=0.0001)
     # test derivative of the dual of the demand equilibrium constraint
     data = build_opf_model(case_name; percen_bidding_nodes=percen_bidding_nodes)
     pmax = data["pmax"]
@@ -243,6 +243,9 @@ function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; pe
     num_ineq = length(leq_locations) + length(geq_locations)
     num_primal = length(primal_vars)
     bidding_lmps_index = [findall(x -> x == i, cons)[1] for i in data["bidding_lmps"]]
+    if !isnothing(Δp)
+        Δp = fill(Δp, num_bidding_nodes)
+    end
     # Δp = rand(-pmax*0.1:0.001:pmax*0.1, num_bidding_nodes)
     # Δs, sp = compute_sensitivity(evaluator, cons, Δp; primal_vars=primal_vars, params=data["bid"])
     
@@ -270,10 +273,13 @@ function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; pe
             optimize!(data["model"])
             @assert is_solved_and_feasible(data["model"])
         end
-        Δs, sp = compute_sensitivity(evaluator, cons, fill(0.0001, num_bidding_nodes); primal_vars=primal_vars, params=data["bid"])
+        
+        Δs, sp = compute_sensitivity(evaluator, cons, Δp; primal_vars=primal_vars, params=data["bid"])
         for i in 1:num_bidding_nodes
             g[i] = Δs[i]
-            g[num_bidding_nodes + i] = -Δs[num_primal + num_ineq + i]
+        end
+        for (i, b_idx) in enumerate(bidding_lmps_index)
+            g[i] = -Δs[num_primal + num_ineq + b_idx]
         end
         return g
         # return [Δs[1:num_bidding_nodes]; -(Δs[(num_primal + num_ineq) .+ bidding_lmps_index])]

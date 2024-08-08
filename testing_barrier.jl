@@ -22,7 +22,8 @@ test_compute_derivatives_Finite_Diff()
 
 test_compute_derivatives_Analytical()
 
-test_bilevel_ac_strategic_bidding("pglib_opf_case5_pjm.m"; percen_bidding_nodes=0.5)
+# "pglib_opf_case5_pjm.m" "pglib_opf_case14_ieee" "pglib_opf_case30_ieee" "pglib_opf_case57_ieee" "pglib_opf_case118_ieee" "pglib_opf_case300_ieee"
+test_bilevel_ac_strategic_bidding("pglib_opf_case300_ieee"; percen_bidding_nodes=0.1, Δp=nothing)
 
 #######################
 # Test Bilevel (LP)
