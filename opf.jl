@@ -34,28 +34,14 @@ function build_gen(gen_bus, id, pmax, qmax)
     )
 end
 
-function build_opf_model(case_name; percen_bidding_nodes=0.1)
-    data = make_basic_network(pglib(case_name))
-    data["basic_network"] = false
-    # add bidding generators
-    num_bidding_nodes = ceil(Int, length(data["bus"]) * percen_bidding_nodes)
-    bidding_nodes = parse.(Int, rand(keys(data["bus"]), num_bidding_nodes))
-    existing_gens = maximum(parse.(Int, collect(keys(data["gen"]))))
-    pmax = maximum([data["gen"][g]["pmax"] for g in keys(data["gen"])])
-    qmax = maximum([data["gen"][g]["qmax"] for g in keys(data["gen"])])
-    bidding_gen_ids = existing_gens + 1:existing_gens + num_bidding_nodes
-    for (i, node) in enumerate(bidding_nodes)
-        data["gen"]["$(bidding_gen_ids[i])"] = build_gen(node, bidding_gen_ids[i], pmax, qmax)
-    end
-    data = make_basic_network(data)
+function build_opf_model(data; add_param_load=false, solver=Ipopt.Optimizer)
     # create ref
     PowerModels.standardize_cost_terms!(data, order=2)
     PowerModels.calc_thermal_limits!(data)
     ref = PowerModels.build_ref(data)[:it][:pm][:nw][0]
 
-    # Model
-    model = JuMP.Model(Ipopt.Optimizer)
-    #JuMP.set_optimizer_attribute(model, "print_level", 0)
+    # create model
+    model = JuMP.Model(solver)
 
     JuMP.@variable(model, va[i in keys(ref[:bus])])
     JuMP.@variable(model, ref[:bus][i]["vmin"] <= vm[i in keys(ref[:bus])] <= ref[:bus][i]["vmax"], start=1.0)
@@ -65,10 +51,6 @@ function build_opf_model(case_name; percen_bidding_nodes=0.1)
     end
     JuMP.@variable(model, ref[:gen][i]["pmin"] <= pg[i in keys(ref[:gen])] <= ref[:gen][i]["pmax"])
     JuMP.@variable(model, ref[:gen][i]["qmin"] <= qg[i in keys(ref[:gen])] <= ref[:gen][i]["qmax"])
-
-    # add bids
-    JuMP.@variable(model, pg_bid[i in bidding_gen_ids] ∈ MOI.Parameter.(pmax * 0.5))
-    @constraint(model, bid[i in bidding_gen_ids], pg[i] <= pg_bid[i])
 
     for i in keys(ref[:gen])
         JuMP.set_name(pg[i], "pg_$i")
@@ -86,6 +68,14 @@ function build_opf_model(case_name; percen_bidding_nodes=0.1)
         JuMP.@constraint(model, va[i] == 0)
     end
 
+    if add_param_load
+        @variable(model, pload[i in keys(ref[:bus])] ∈ MOI.Parameter.(0.0))
+        @variable(model, qload[i in keys(ref[:bus])] ∈ MOI.Parameter.(0.0))
+    else
+        pload = zeros(length(ref[:bus]))
+        qload = zeros(length(ref[:bus]))
+    end
+
     demand_equilibrium = Dict{Int, JuMP.ConstraintRef}()
     for (i,bus) in ref[:bus]
         bus_loads = [ref[:load][l] for l in ref[:bus_loads][i]]
@@ -95,13 +85,15 @@ function build_opf_model(case_name; percen_bidding_nodes=0.1)
             sum(p[a] for a in ref[:bus_arcs][i]) ==
             sum(pg[g] for g in ref[:bus_gens][i]) -
             sum(load["pd"] for load in bus_loads) -
+            pload[i] -
             sum(shunt["gs"] for shunt in bus_shunts)*vm[i]^2
         )
 
         JuMP.@constraint(model,
             sum(q[a] for a in ref[:bus_arcs][i]) ==
             sum(qg[g] for g in ref[:bus_gens][i]) -
-            sum(load["qd"] for load in bus_loads) +
+            sum(load["qd"] for load in bus_loads) -
+            qload[i] +
             sum(shunt["bs"] for shunt in bus_shunts)*vm[i]^2
         )
 
@@ -146,6 +138,30 @@ function build_opf_model(case_name; percen_bidding_nodes=0.1)
         JuMP.@constraint(model, p_fr^2 + q_fr^2 <= branch["rate_a"]^2)
         JuMP.@constraint(model, p_to^2 + q_to^2 <= branch["rate_a"]^2)
     end
+
+    return model, ref, demand_equilibrium, p, q, pg, qg, va, vm, pload, qload
+end
+
+function build_bidding_opf_model(case_name; percen_bidding_nodes=0.1, solver=Ipopt.Optimizer)
+    data = make_basic_network(pglib(case_name))
+    data["basic_network"] = false
+    # add bidding generators
+    num_bidding_nodes = ceil(Int, length(data["bus"]) * percen_bidding_nodes)
+    bidding_nodes = parse.(Int, rand(keys(data["bus"]), num_bidding_nodes))
+    existing_gens = maximum(parse.(Int, collect(keys(data["gen"]))))
+    pmax = maximum([data["gen"][g]["pmax"] for g in keys(data["gen"])])
+    qmax = maximum([data["gen"][g]["qmax"] for g in keys(data["gen"])])
+    bidding_gen_ids = existing_gens + 1:existing_gens + num_bidding_nodes
+    for (i, node) in enumerate(bidding_nodes)
+        data["gen"]["$(bidding_gen_ids[i])"] = build_gen(node, bidding_gen_ids[i], pmax, qmax)
+    end
+    data = make_basic_network(data)
+    
+    model, ref, demand_equilibrium, p, q, pg, qg, va, vm, pload, qload = build_opf_model(data; solver=solver)
+
+    # add bids
+    JuMP.@variable(model, pg_bid[i in bidding_gen_ids] ∈ MOI.Parameter.(pmax * 0.5))
+    @constraint(model, bid[i in bidding_gen_ids], pg[i] <= pg_bid[i])
 
     model_variables = JuMP.num_variables(model)
 
@@ -232,7 +248,7 @@ end
 
 function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; percen_bidding_nodes=0.1, Δp=0.0001)
     # test derivative of the dual of the demand equilibrium constraint
-    data = build_opf_model(case_name; percen_bidding_nodes=percen_bidding_nodes)
+    data = build_bidding_opf_model(case_name; percen_bidding_nodes=percen_bidding_nodes)
     pmax = data["pmax"]
     primal_vars = [data["bidding_generators_dispatch"]; data["model_variables"]]
     num_bidding_nodes = length(data["bidding_generators_dispatch"])
@@ -307,4 +323,28 @@ function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; pe
     println("Duals: ", value.(lambda))
     println("Bids: ", value.(pg_bid))
     println("Dispatch: ", value.(pg))
+end
+
+function sesitivity_load(case_name="pglib_opf_case5_pjm.m"; Δp=nothing, solver=Ipopt.Optimizer)
+    data = make_basic_network(pglib(case_name))
+
+    model, ref, demand_equilibrium, p, q, pg, qg, va, vm, pload, qload = build_opf_model(data; solver=solver, add_param_load=true)
+    num_bus = length(ref[:bus])
+    demand_equilibrium = [demand_equilibrium[i] for i in 1:num_bus]
+
+    optimize!(model)
+
+    params = vcat(pload.data, qload.data)
+    all_primal_variables = all_variables(model)
+    primal_vars = setdiff(all_primal_variables, params)
+
+    evaluator, cons = create_evaluator(model; x=[primal_vars; params])
+
+    leq_locations, geq_locations = find_inequealities(cons)
+    num_ineq = length(leq_locations) + length(geq_locations)
+    num_primal = length(primal_vars)
+    lmps_index = [findall(x -> x == i, cons)[1] for i in demand_equilibrium]
+
+    Δs, sp = compute_sensitivity(evaluator, cons, Δp; primal_vars=primal_vars, params=params)
+    return Δs[1:num_primal], Δs[(num_primal + num_ineq) .+ lmps_index]
 end

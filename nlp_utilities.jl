@@ -3,6 +3,7 @@ using MathOptInterface
 import MathOptInterface: ConstraintSet, CanonicalConstraintFunction
 using SparseArrays
 using LinearAlgebra
+import JuMP.index
 
 """
     create_nlp_model(model::JuMP.Model)
@@ -107,10 +108,12 @@ all_params(model::Model) = filter(x -> is_parameter(x), all_variables(model))
 
 Create an evaluator for the model.
 """
+index(x::JuMP.Containers.DenseAxisArray) = index.(x).data
+
 function create_evaluator(model::Model; x=all_variables(model))
     nlp, rows = create_nlp_model(model)
     backend = MOI.Nonlinear.SparseReverseMode()
-    evaluator = MOI.Nonlinear.Evaluator(nlp, backend, index.(x))
+    evaluator = MOI.Nonlinear.Evaluator(nlp, backend, vcat(index.(x)...))
     MOI.initialize(evaluator, [:Hess, :Jac])
     return evaluator, rows
 end
