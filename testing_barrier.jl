@@ -27,5 +27,7 @@ test_compute_derivatives_Analytical()
 Random.seed!(1234)
 @time test_bilevel_ac_strategic_bidding("pglib_opf_case300_ieee"; percen_bidding_nodes=0.1)
 
+# Random.seed!(1234)
 # Δp=0.0 (no derivative): time=4.61s | obj= $474.18
-# Δp=nothing (no restoration): time=4.61s | obj= $474.18
+# Δp=nothing (no restoration): time=452.65s | obj= $79886.16
+# Δp=0.001 (with derivative): time=54.64s | obj= $474.18
