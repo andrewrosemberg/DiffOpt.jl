@@ -291,6 +291,9 @@ function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; pe
         end
         
         Δs, sp = compute_sensitivity(evaluator, cons, Δp; primal_vars=primal_vars, params=data["bid"])
+        if isnothing(Δp)
+            Δs = Δs * ones(size(Δs, 2))
+        end
         for i in 1:num_bidding_nodes
             g[i] = Δs[i]
         end
@@ -346,5 +349,5 @@ function sesitivity_load(case_name="pglib_opf_case5_pjm.m"; Δp=nothing, solver=
     lmps_index = [findall(x -> x == i, cons)[1] for i in demand_equilibrium]
 
     Δs, sp = compute_sensitivity(evaluator, cons, Δp; primal_vars=primal_vars, params=params)
-    return Δs[1:num_primal], Δs[(num_primal + num_ineq) .+ lmps_index]
+    return Δs[1:num_primal, :], Δs[(num_primal + num_ineq) .+ lmps_index, :]
 end

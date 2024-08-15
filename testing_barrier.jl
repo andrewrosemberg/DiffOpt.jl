@@ -32,6 +32,6 @@ Random.seed!(1234)
 # Δp=nothing (no restoration): time=452.65s | obj= $79886.16
 # Δp=0.001 (with derivative): time=54.64s | obj= $474.18
 
-Δp = zeros(48)
-Δp[1] = 1.0
-Δs_primal, Δs_dual = sesitivity_load("pglib_opf_case24_ieee_rts"; Δp=Δp)
+Δs_primal, Δs_dual = sesitivity_load("pglib_opf_case24_ieee_rts")
+Δs_dual[21,1:24]
+Δs_dual[21,25:end]

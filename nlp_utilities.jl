@@ -494,9 +494,8 @@ function compute_sensitivity(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     ∂s, K, N = compute_derivatives_no_relax(evaluator, cons, primal_vars, params, X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low)
     if isnothing(Δp) || iszero(Δp)
         Λ = dual.(cons)
-        Δs = ∂s * ones(size(∂s, 2))
-        sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
-        return Δs, sp
+        sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], ∂s * ones(size(∂s, 2)))
+        return ∂s, sp
     end
     Δs = ∂s * Δp
     num_bounds = length(has_up) + length(has_low)
