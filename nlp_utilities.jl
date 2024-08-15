@@ -108,7 +108,7 @@ all_params(model::Model) = filter(x -> is_parameter(x), all_variables(model))
 
 Create an evaluator for the model.
 """
-index(x::JuMP.Containers.DenseAxisArray) = index.(x).data
+JuMP.index(x::JuMP.Containers.DenseAxisArray) = index.(x).data
 
 function create_evaluator(model::Model; x=all_variables(model))
     nlp, rows = create_nlp_model(model)
