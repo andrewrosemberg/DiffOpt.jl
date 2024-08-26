@@ -23,6 +23,10 @@ test_compute_derivatives_Finite_Diff()
 
 test_compute_derivatives_Analytical()
 
+################################################
+# Strategic bidding test
+################################################
+
 # "pglib_opf_case5_pjm" "pglib_opf_case14_ieee" "pglib_opf_case30_ieee" "pglib_opf_case57_ieee" "pglib_opf_case118_ieee" "pglib_opf_case300_ieee" "pglib_opf_case24_ieee_rts"
 Random.seed!(1234)
 @time test_bilevel_ac_strategic_bidding("pglib_opf_case24_ieee_rts"; percen_bidding_nodes=0.1)
@@ -35,3 +39,44 @@ Random.seed!(1234)
 Δs_primal, Δs_dual = sesitivity_load("pglib_opf_case24_ieee_rts")
 Δs_dual[21,1:24]
 Δs_dual[21,25:end]
+
+################################################
+# Moonlander test
+################################################
+
+include("moonlanding.jl")
+using HSL_jll
+
+model, tf, Isp = moonlander_JMP()
+set_optimizer(model, optimizer_with_attributes(Ipopt.Optimizer, 
+    "print_level" => 0,
+    "hsllib" => HSL_jll.libhsl_path,
+    "linear_solver" => "MA57"
+))
+JuMP.optimize!(model)
+termination_status = JuMP.termination_status(model)
+value(tf), value(Isp), termination_status
+
+function compute_sentitivity_for_var(model; _primal_vars=[], _cons=[], Δp=nothing)
+    primal_vars = all_primal_vars(model)
+    params = all_params(model)
+    vars_idx = [findall(x -> x == i, primal_vars)[1] for i in _primal_vars]
+    evaluator, cons = create_evaluator(model; x=[primal_vars; params])
+    num_cons = length(cons)
+    cons_idx = [findall(x -> x == i, cons)[1] for i in _cons]
+    leq_locations, geq_locations = find_inequealities(cons)
+    num_ineq = length(leq_locations) + length(geq_locations)
+    num_primal = length(primal_vars)
+
+    Δs, sp = compute_sensitivity(evaluator, cons, Δp; primal_vars=primal_vars, params=params)
+    return Δs[vars_idx, :], Δs[num_primal+num_ineq.+cons_idx, :], sp[vars_idx, :], sp[num_primal+num_ineq.+cons_idx, :]
+end
+
+Δp=nothing
+
+Δs_primal, Δs_dual, sp_primal, sp_dual = compute_sentitivity_for_var(model; _primal_vars=[tf], Δp=Δp)
+
+set_parameter_value(Isp, 1.1)
+JuMP.optimize!(model)
+termination_status = JuMP.termination_status(model)
+value(tf), value(Isp), termination_status
