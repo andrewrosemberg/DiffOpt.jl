@@ -47,7 +47,8 @@ Random.seed!(1234)
 include("moonlanding.jl")
 using HSL_jll
 
-model, tf, Isp = moonlander_JMP()
+Isp_0 = 0.3
+model, tf, Isp = moonlander_JMP(_I=Isp_0)
 set_optimizer(model, optimizer_with_attributes(Ipopt.Optimizer, 
     "print_level" => 0,
     "hsllib" => HSL_jll.libhsl_path,
@@ -55,7 +56,7 @@ set_optimizer(model, optimizer_with_attributes(Ipopt.Optimizer,
 ))
 JuMP.optimize!(model)
 termination_status = JuMP.termination_status(model)
-value(tf), value(Isp), termination_status
+tf_0 = value(tf)
 
 function compute_sentitivity_for_var(model; _primal_vars=[], _cons=[], Δp=nothing)
     primal_vars = all_primal_vars(model)
@@ -75,8 +76,12 @@ end
 Δp=nothing
 
 Δs_primal, Δs_dual, sp_primal, sp_dual = compute_sentitivity_for_var(model; _primal_vars=[tf], Δp=Δp)
+Δp = 0.001
+tf_p = tf_0 + Δs_primal[1] * Δp
 
-set_parameter_value(Isp, 1.1)
+set_parameter_value(Isp, Isp_0+Δp)
 JuMP.optimize!(model)
 termination_status = JuMP.termination_status(model)
-value(tf), value(Isp), termination_status
+tf_p_true = value(tf)
+
+@test tf_p ≈ tf_p_true rtol=1e-3
