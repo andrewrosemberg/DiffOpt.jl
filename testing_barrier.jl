@@ -28,13 +28,28 @@ test_compute_derivatives_Analytical()
 ################################################
 
 # "pglib_opf_case5_pjm" "pglib_opf_case14_ieee" "pglib_opf_case30_ieee" "pglib_opf_case57_ieee" "pglib_opf_case118_ieee" "pglib_opf_case300_ieee" "pglib_opf_case24_ieee_rts"
-Random.seed!(1234)
-@time test_bilevel_ac_strategic_bidding("pglib_opf_case24_ieee_rts"; percen_bidding_nodes=0.1)
-
 # Random.seed!(1234)
+# @time test_bilevel_ac_strategic_bidding("pglib_opf_case24_ieee_rts"; percen_bidding_nodes=0.1)
+
+# casename = "pglib_opf_case300_ieee"
+# Random.seed!(1234)
+# @time test_bilevel_ac_strategic_bidding(casename; percen_bidding_nodes=0.1)
 # Δp=0.0 (no derivative): time=4.61s | obj= $474.18
 # Δp=nothing (no restoration): time=452.65s | obj= $79886.16
 # Δp=0.001 (with derivative): time=54.64s | obj= $474.18
+
+# casename = "pglib_opf_case14_ieee"
+# Random.seed!(1234)
+# @time test_bilevel_ac_strategic_bidding(casename; percen_bidding_nodes=0.1, Δp=nothing)
+# Δp=0.0 (no derivative): time=8.93s | obj= $0.00
+# Δp=nothing (no restoration): time=0.94s | obj= $0.00
+# Δp=0.001 (with derivative): time=0.58s | obj= $0.00
+
+
+
+################################################
+# Load sensitivity
+################################################
 
 Δs_primal, Δs_dual = sesitivity_load("pglib_opf_case24_ieee_rts")
 Δs_dual[21,1:24]

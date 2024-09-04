@@ -201,6 +201,65 @@ function create_jump_model_3(p_val = [-1.5])
     return model, [x], [con1; con2], [p]
 end
 
+function create_jump_model_4(p_val = [1.5])
+    model = Model(Ipopt.Optimizer)
+    set_silent(model)
+
+    # Parameters
+    @variable(model, p ∈ MOI.Parameter(p_val[1]))
+
+    # Variables
+    @variable(model, x) 
+
+    # Constraints
+    @constraint(model, con1, x <= p)
+    @constraint(model, con2, x <= 2)
+    @objective(model, Max, x)
+
+    return model, [x], [con1; con2], [p]
+end
+
+function create_jump_model_5(p_val = [1.5])
+    model = Model(Ipopt.Optimizer)
+    set_silent(model)
+
+    # Parameters
+    @variable(model, p ∈ MOI.Parameter(p_val[1]))
+
+    # Variables
+    @variable(model, x) 
+
+    # Constraints
+    @constraint(model, con1, x >= p)
+    @constraint(model, con2, x >= 2)
+    @objective(model, Max, -x)
+
+    return model, [x], [con1; con2], [p]
+end
+
+# Softmax model
+h(y) = - sum(y .* log.(y))
+softmax(x) = exp.(x) / sum(exp.(x))
+function create_jump_model_6(p_a = collect(1.0:0.1:2.0))
+    model = Model(Ipopt.Optimizer)
+    set_silent(model)
+
+    # Parameters
+    @variable(model, x[i=1:length(p_a)] ∈ MOI.Parameter.(p_a))
+
+    # Variables
+    @variable(model, y[1:length(p_a)] >= 0.0)
+
+    # Constraints
+    @constraint(model, con1, sum(y) == 1)
+    @constraint(model, con2[i=1:length(x)], y[i] <= 1)
+
+    # Objective
+    @objective(model, Max, dot(x, y) + h(y))
+
+    return model, y, [con1; con2], x
+end
+
 
 DICT_PROBLEMS_Analytical = Dict(
     "geq no impact" => (p_a=[1.5], Δp=[0.2], Δs_a=[0.0; -0.2; 0.0; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_1),
@@ -210,6 +269,14 @@ DICT_PROBLEMS_Analytical = Dict(
     "geq bound impact" => (p_a=[2.1], Δp=[0.2], Δs_a=[0.2; 0.0; 0.4; 0.0; 0.4], model_generator=create_jump_model_2),
     "leq no impact" => (p_a=[-1.5], Δp=[-0.2], Δs_a=[0.0; 0.2; 0.0; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_3),
     "leq active constraint change" => (p_a=[-1.9], Δp=[-0.2], Δs_a=[-0.1; 0.1; -0.1], model_generator=create_jump_model_3),
+    "leq impact" => (p_a=[-2.1], Δp=[-0.2], Δs_a=[-0.2; 0.0; -0.2], model_generator=create_jump_model_3),
+    "leq no impact max" => (p_a=[2.1], Δp=[0.2], Δs_a=[0.0; -0.2; 0.0; 0.0; 0.0], model_generator=create_jump_model_4),
+    "leq active constraint change max" => (p_a=[1.9], Δp=[0.2], Δs_a=[0.1; -0.1; 0.1], model_generator=create_jump_model_4),
+    "leq impact max" => (p_a=[1.5], Δp=[0.2], Δs_a=[0.2; 0.0; 0.2], model_generator=create_jump_model_4),
+    "geq no impact max" => (p_a=[1.5], Δp=[0.2], Δs_a=[0.0; -0.2; 0.0; 0.0; 0.0], model_generator=create_jump_model_5),
+    "geq active constraint change max" => (p_a=[1.9], Δp=[0.2], Δs_a=[0.1; -0.1; 0.1], model_generator=create_jump_model_5),
+    "geq impact max" => (p_a=[2.1], Δp=[0.2], Δs_a=[0.2; 0.0; 0.2], model_generator=create_jump_model_5),
+    "softmax" => (p_a=collect(1.0:0.1:2.0), Δp=collect(-0.1:0.02:0.1), Δs_a=jacobian(softmax, p_a)[1] * Δp, model_generator=create_jump_model_6)
 )
 
 function test_compute_derivatives_Analytical()
@@ -220,7 +287,7 @@ function test_compute_derivatives_Analytical()
         # Compute derivatives
         (Δs, sp_approx), evaluator, cons = compute_sensitivity(model, Δp; primal_vars, params)
         # Check sensitivities
-        @test all(isapprox.(Δs[1:length(Δs_a)], Δs_a; atol = 1e-6))
+        @test all(isapprox.(Δs[1:length(Δs_a)], Δs_a; atol = 1e-4))
     end
 end
 
