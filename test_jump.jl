@@ -151,7 +151,7 @@ model = JuMP.Model(Ipopt.Optimizer)
 @objective(model, Max, - x + y - z - w + u)
 
 con1 = @constraint(model, x - 1 == 0)
-
+# s = w - 4 -> s >= 0 λ
 con1s = @constraint(model, w - 4 >= 0)
 con2s = @constraint(model, u - 5 <= 0)
 

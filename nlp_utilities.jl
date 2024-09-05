@@ -208,14 +208,24 @@ function compute_solution_and_bounds(primal_vars::Vector{VariableRef}, cons::Vec
     for (i, j) in enumerate(has_low)
         V_L[i] = dual.(LowerBoundRef(primal_vars[j])) * sense_multiplier
         #
-        V_L[i] <= -1e-6 && @info "Dual of lower bound must be positive" i V_L[i]
+        if sense_multiplier == 1.0
+            V_L[i] <= -1e-6 && @info "Dual of lower bound must be positive" i V_L[i]
+        else
+            V_L[i] >= 1e-6 && @info "Dual of lower bound must be negative" i V_L[i]
+        end
         #
         X_L[i] = JuMP.lower_bound(primal_vars[j])
     end
     for (i, con) in enumerate(cons[geq_locations])
-        V_L[num_vars+i] = dual.(con) * (- sense_multiplier)
+        # By convention jump dual will allways be positive for geq constraints
+        # but for ipopt it will be positive if min problem and negative if max problem
+        V_L[num_vars+i] = dual.(con) * (sense_multiplier)
         #
-        V_L[num_vars+i] <= -1e-6 && @info "Dual of geq constraint must be positive" i V_L[num_vars+i]
+        if sense_multiplier == 1.0
+            V_L[num_vars+i] <= -1e-6 && @info "Dual of geq constraint must be positive" i V_L[num_vars+i]
+        else
+            V_L[num_vars+i] >= 1e-6 && @info "Dual of geq constraint must be negative" i V_L[num_vars+i]
+        end
     end
     # value and dual of the upper bounds
     V_U = spzeros(num_vars+num_ineq)
@@ -223,16 +233,25 @@ function compute_solution_and_bounds(primal_vars::Vector{VariableRef}, cons::Vec
     for (i, j) in enumerate(has_up)
         V_U[i] = dual.(UpperBoundRef(primal_vars[j])) * (- sense_multiplier)
         #
-        V_U[i] <= -1e-6 && @info "Dual of upper bound must be positive" i V_U[i]
+        if sense_multiplier == 1.0
+            V_U[i] <= -1e-6 && @info "Dual of upper bound must be positive" i V_U[i]
+        else
+            V_U[i] >= 1e-6 && @info "Dual of upper bound must be negative" i V_U[i]
+        end
         #
         X_U[i] = JuMP.upper_bound(primal_vars[j])
     end
     for (i, con) in enumerate(cons[leq_locations])
+        # By convention jump dual will allways be negative for leq constraints
+        # but for ipopt it will be positive if min problem and negative if max problem
         V_U[num_vars+i] = dual.(con) * (- sense_multiplier)
         #
-        V_U[num_vars+i] <= -1e-6 && @info "Dual of leq constraint must be non-positive" i V_U[num_vars+i]
+        if sense_multiplier == 1.0
+            V_U[num_vars+i] <= -1e-6 && @info "Dual of leq constraint must be positive" i V_U[num_vars+i]
+        else
+            V_U[num_vars+i] >= 1e-6 && @info "Dual of leq constraint must be negative" i V_U[num_vars+i]
+        end
     end
-
     return X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, vcat(has_up, collect(num_vars+num_geq+1:num_vars+num_geq+num_leq)), vcat(has_low, collect(num_vars+1:num_vars+num_geq))
 end
 
@@ -465,7 +484,7 @@ end
 
 Find the bound violations of the primal-dual solution first order approximation based on the (unrelaxed) sensitivity estimation.
 """
-function find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
+function find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol, ismin)
     num_w = length(X)
     num_low = length(has_low)
     num_up = length(has_up)
@@ -478,10 +497,18 @@ function find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, t
             push!(_E, i)
             push!(r1, X[i] - X_L[i])
         end
-        if sp[num_w+num_cons+j] < -tol
-            println("Violation LB Dual: ", i, " ", sp[num_w+num_cons+j], " ", V_L[i])
-            push!(_E, num_w+num_cons+j)
-            push!(r1, V_L[i])
+        if ismin
+            if sp[num_w+num_cons+j] < -tol
+                println("Violation LB Dual: ", i, " ", sp[num_w+num_cons+j], " ", V_L[i])
+                push!(_E, num_w+num_cons+j)
+                push!(r1, V_L[i])
+            end
+        else
+            if sp[num_w+num_cons+j] > tol
+                println("Violation LB Dual: ", i, " ", sp[num_w+num_cons+j], " ", V_L[i])
+                push!(_E, num_w+num_cons+j)
+                push!(r1, V_L[i])
+            end
         end
     end
     for (j, i) in enumerate(has_up)
@@ -490,10 +517,18 @@ function find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, t
             push!(_E, i)
             push!(r1, X_U[i] - X[i])
         end
-        if sp[num_w+num_cons+num_low+j] > tol
-            println("Violation UB Dual: ", i, " ", sp[num_w+num_cons+num_low+j], " ", V_U[i])
-            push!(_E, num_w+num_cons+num_low+j)
-            push!(r1, V_U[i])
+        if ismin
+            if sp[num_w+num_cons+num_low+j] < -tol
+                println("Violation UB Dual: ", i, " ", sp[num_w+num_cons+num_low+j], " ", V_U[i])
+                push!(_E, num_w+num_cons+num_low+j)
+                push!(r1, V_U[i])
+            end
+        else
+            if sp[num_w+num_cons+num_low+j] > tol
+                println("Violation UB Dual: ", i, " ", sp[num_w+num_cons+num_low+j], " ", V_U[i])
+                push!(_E, num_w+num_cons+num_low+j)
+                push!(r1, V_U[i])
+            end
         end
     end
     
@@ -509,6 +544,7 @@ end
 function compute_sensitivity(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}, 
     Δp; primal_vars=all_primal_vars(model), params=all_params(model), tol=1e-6
 )
+    ismin = sense_mult(primal_vars) == 1.0
     sense_multiplier = sense_mult(primal_vars)
     num_cons = length(cons)
     num_var = length(primal_vars)
@@ -534,7 +570,7 @@ function compute_sensitivity(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     # Δs[end-num_bounds+1:end] = Δs[end-num_bounds+1:end] .* -1.0 # Correcting the sign of the bounds duals for the standard form
     sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
     # Linearly appoximated solution
-    E, r1 = find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
+    E, r1 = find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol, ismin)
     if !isempty(r1)
         @warn "Relaxation needed"
         Δs = fix_and_relax(E, K, N, r1, Δp)

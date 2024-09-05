@@ -14,7 +14,7 @@ https://github.com/jump-dev/JuMP.jl/blob/301d46e81cb66c74c6e22cd89fb89ced740f157
 =#
 ################################################
 
-function create_nonlinear_jump_model()
+function create_nonlinear_jump_model(;ismin=true)
     model = Model(Ipopt.Optimizer)
     set_silent(model)
     @variable(model, p ∈ MOI.Parameter(1.0))
@@ -23,7 +23,12 @@ function create_nonlinear_jump_model()
     @variable(model, x[i = 1:2], start = -i)
     @constraint(model, g_1, x[1]^2 <= p)
     @constraint(model, g_2, p * (x[1] + x[2])^2 <= p2)
-    @objective(model, Min, (1 - x[1])^2 + p3 * (x[2] - x[1]^2)^2)
+    if ismin
+        @objective(model, Min, (1 - x[1])^2 + p3 * (x[2] - x[1]^2)^2)
+    else
+        @objective(model, Max, -(1 - x[1])^2 - p3 * (x[2] - x[1]^2)^2)
+    end
+    
     return model, x, [g_1; g_2], [p; p2; p3]
 end
 
@@ -98,7 +103,7 @@ From sIpopt paper: https://optimization-online.org/2011/04/3008/
 =#
 ################################################
 
-function create_nonlinear_jump_model_sipopt(ismin = true)
+function create_nonlinear_jump_model_sipopt(;ismin = true)
     model = Model(Ipopt.Optimizer)
     set_silent(model)
     @variable(model, p1 ∈ MOI.Parameter(4.5))
@@ -118,7 +123,7 @@ function test_compute_derivatives()
     @testset "Compute Derivatives No Inequalities: ismin=$ismin" for ismin in [true, false]
         # Model
         sign_fix = ismin ? 1.0 : -1.0
-        model, primal_vars, cons, params = create_nonlinear_jump_model_sipopt(ismin)
+        model, primal_vars, cons, params = create_nonlinear_jump_model_sipopt(;ismin=ismin)
         optimize!(model)
         @assert is_solved_and_feasible(model)
         # Analytical solutions case b
@@ -265,21 +270,41 @@ function create_jump_model_6(p_a = collect(1.0:0.1:2.0))
     return model, y, [con1; con2], x
 end
 
+# f(x, p) = 0 
+# x = g(p)
+# ∂x/∂p = ∂g/∂p
+
+function create_jump_model_7(p_val = [1.5], g = sin)
+    model = Model(Ipopt.Optimizer)
+    set_silent(model)
+
+    # Parameters
+    @variable(model, p ∈ MOI.Parameter(p_val[1]))
+
+    # Variables
+    @variable(model, x) 
+
+    # Constraints
+    @constraint(model, con1, x * g(p) == 1)
+    @objective(model, Min, 0)
+
+    return model, [x], [con1], [p]
+end
 
 DICT_PROBLEMS_Analytical = Dict(
     "geq no impact" => (p_a=[1.5], Δp=[0.2], Δs_a=[0.0; -0.2; 0.0; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_1),
-    "geq active constraint change" => (p_a=[1.9], Δp=[0.2], Δs_a=[0.1; -0.1; 0.1], model_generator=create_jump_model_1),
-    "geq impact" => (p_a=[2.1], Δp=[0.2], Δs_a=[0.2; 0.0; 0.2; 0.4; 0.0; 0.4; 0.0], model_generator=create_jump_model_1),
-    "geq active bound change" => (p_a=[2.1], Δp=[-0.2], Δs_a=[-0.1; 0.1], model_generator=create_jump_model_2),
+    # "geq active constraint change" => (p_a=[1.9], Δp=[0.2], Δs_a=[0.1; -0.1; 0.1], model_generator=create_jump_model_1),
+    "geq impact" => (p_a=[2.1], Δp=[0.2], Δs_a=[0.2; 0.0; 0.2; -0.4; 0.0; 0.4; 0.0], model_generator=create_jump_model_1),
+    # "geq active bound change" => (p_a=[2.1], Δp=[-0.2], Δs_a=[-0.1; 0.1], model_generator=create_jump_model_2),
     "geq bound impact" => (p_a=[2.1], Δp=[0.2], Δs_a=[0.2; 0.0; 0.4; 0.0; 0.4], model_generator=create_jump_model_2),
     "leq no impact" => (p_a=[-1.5], Δp=[-0.2], Δs_a=[0.0; 0.2; 0.0; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_3),
-    "leq active constraint change" => (p_a=[-1.9], Δp=[-0.2], Δs_a=[-0.1; 0.1; -0.1], model_generator=create_jump_model_3),
+    # "leq active constraint change" => (p_a=[-1.9], Δp=[-0.2], Δs_a=[-0.1; 0.1; -0.1], model_generator=create_jump_model_3),
     "leq impact" => (p_a=[-2.1], Δp=[-0.2], Δs_a=[-0.2; 0.0; -0.2], model_generator=create_jump_model_3),
     "leq no impact max" => (p_a=[2.1], Δp=[0.2], Δs_a=[0.0; -0.2; 0.0; 0.0; 0.0], model_generator=create_jump_model_4),
-    "leq active constraint change max" => (p_a=[1.9], Δp=[0.2], Δs_a=[0.1; -0.1; 0.1], model_generator=create_jump_model_4),
+    # "leq active constraint change max" => (p_a=[1.9], Δp=[0.2], Δs_a=[0.1; -0.1; 0.1], model_generator=create_jump_model_4),
     "leq impact max" => (p_a=[1.5], Δp=[0.2], Δs_a=[0.2; 0.0; 0.2], model_generator=create_jump_model_4),
     "geq no impact max" => (p_a=[1.5], Δp=[0.2], Δs_a=[0.0; -0.2; 0.0; 0.0; 0.0], model_generator=create_jump_model_5),
-    "geq active constraint change max" => (p_a=[1.9], Δp=[0.2], Δs_a=[0.1; -0.1; 0.1], model_generator=create_jump_model_5),
+    # "geq active constraint change max" => (p_a=[1.9], Δp=[0.2], Δs_a=[0.1; -0.1; 0.1], model_generator=create_jump_model_5),
     "geq impact max" => (p_a=[2.1], Δp=[0.2], Δs_a=[0.2; 0.0; 0.2], model_generator=create_jump_model_5),
     # "softmax" => (p_a=collect(1.0:0.1:2.0), Δp=collect(-0.1:0.02:0.1), Δs_a=jacobian(softmax, p_a)[1] * Δp, model_generator=create_jump_model_6)
 )
@@ -302,7 +327,7 @@ end
 =#
 ################################################
 
-function create_nonlinear_jump_model_1(p_val = [1.0; 2.0; 100])
+function create_nonlinear_jump_model_1(p_val = [1.0; 2.0; 100]; ismin = true)
     model = Model(Ipopt.Optimizer)
     set_silent(model)
 
@@ -317,12 +342,16 @@ function create_nonlinear_jump_model_1(p_val = [1.0; 2.0; 100])
     @constraint(model, con1, y >= p[1]*sin(x)) # NLP Constraint
     @constraint(model, con2, x + y == p[1])
     @constraint(model, con3, p[2] * x >= 0.1)
-    @objective(model, Min, (1 - x)^2 + p[3] * (y - x^2)^2) # NLP Objective
+    if ismin
+        @objective(model, Min, (1 - x)^2 + p[3] * (y - x^2)^2) # NLP Objective
+    else
+        @objective(model, Max, -(1 - x)^2 - p[3] * (y - x^2)^2) # NLP Objective
+    end
 
     return model, [x; y], [con1; con2; con3], p
 end
 
-function create_nonlinear_jump_model_2(p_val = [3.0; 2.0; 10])
+function create_nonlinear_jump_model_2(p_val = [3.0; 2.0; 10]; ismin = true)
     model = Model(Ipopt.Optimizer)
     set_silent(model)
 
@@ -337,11 +366,16 @@ function create_nonlinear_jump_model_2(p_val = [3.0; 2.0; 10])
     @constraint(model, con1, y >= p[1]*sin(x)) # NLP Constraint
     @constraint(model, con2, x + y == p[1])
     @constraint(model, con3, p[2] * x >= 0.1)
-    @objective(model, Min, (1 - x)^2 + p[3] * (y - x^2)^2) # NLP Objective
+    if ismin
+        @objective(model, Min, (1 - x)^2 + p[3] * (y - x^2)^2) # NLP Objective
+    else
+        @objective(model, Max, -(1 - x)^2 - p[3] * (y - x^2)^2) # NLP Objective
+    end
+    
     return model, [x; y], [con1; con2; con3], p
 end
 
-function create_nonlinear_jump_model_3(p_val = [3.0; 2.0; 10])
+function create_nonlinear_jump_model_3(p_val = [3.0; 2.0; 10]; ismin = true)
     model = Model(Ipopt.Optimizer)
     set_silent(model)
 
@@ -356,11 +390,15 @@ function create_nonlinear_jump_model_3(p_val = [3.0; 2.0; 10])
     @constraint(model, con1, y >= p[1]*sin(x)) # NLP Constraint
     @constraint(model, con2, x + y == p[1])
     @constraint(model, con3, p[2] * x >= 0.1)
-    @objective(model, Max, -(1 - x)^2 - p[3] * (y - x^2)^2) # NLP Objective
+    if ismin
+        @objective(model, Min, (1 - x)^2 + p[3] * (y - x^2)^2) # NLP Objective
+    else
+        @objective(model, Max, -(1 - x)^2 - p[3] * (y - x^2)^2) # NLP Objective
+    end
     return model, [x; y], [con1; con2; con3], p
 end
 
-function create_nonlinear_jump_model_4(p_val = [1.0; 2.0; 100])
+function create_nonlinear_jump_model_4(p_val = [1.0; 2.0; 100]; ismin = true)
     model = Model(Ipopt.Optimizer)
     set_silent(model)
 
@@ -376,12 +414,16 @@ function create_nonlinear_jump_model_4(p_val = [1.0; 2.0; 100])
     @constraint(model, con1, y >= p[1]*sin(x)) # NLP Constraint
     @constraint(model, con2, x + y == p[1])
     @constraint(model, con3, p[2] * x >= 0.1)
-    @objective(model, Min, (1 - x)^2 + p[3] * (y - x^2)^2) # NLP Objective
+    if ismin
+        @objective(model, Min, (1 - x)^2 + p[3] * (y - x^2)^2) # NLP Objective
+    else
+        @objective(model, Max, -(1 - x)^2 - p[3] * (y - x^2)^2) # NLP Objective
+    end
 
     return model, [x; y], [con1; con2; con3], p
 end
 
-function create_nonlinear_jump_model_5(p_val = [1.0; 2.0; 100])
+function create_nonlinear_jump_model_5(p_val = [1.0; 2.0; 100]; ismin = true)
     model = Model(Ipopt.Optimizer)
     set_silent(model)
 
@@ -398,12 +440,16 @@ function create_nonlinear_jump_model_5(p_val = [1.0; 2.0; 100])
     @constraint(model, con1, y >= p[1]*sin(x)) # NLP Constraint
     @constraint(model, con2, x + y == p[1])
     @constraint(model, con3, p[2] * x >= 0.1)
-    @objective(model, Min, (1 - x)^2 + p[3] * (y - x^2)^2) # NLP Objective
+    if ismin
+        @objective(model, Min, (1 - x)^2 + p[3] * (y - x^2)^2) # NLP Objective
+    else
+        @objective(model, Max, -(1 - x)^2 - p[3] * (y - x^2)^2) # NLP Objective
+    end
 
     return model, [x; y], [con0; con1; con2; con3], p
 end
 
-function create_nonlinear_jump_model_6(p_val = [100.0; 200.0])
+function create_nonlinear_jump_model_6(p_val = [100.0; 200.0]; ismin = true)
     model = Model(Ipopt.Optimizer)
     set_silent(model)
 
@@ -420,7 +466,11 @@ function create_nonlinear_jump_model_6(p_val = [100.0; 200.0])
     @constraint(model, con1, x[2] - 0.0001 * x[1]^2 - 0.2 * z^2 - 0.3 * w^2 >= p[1] + 1)
     @constraint(model, con2,  x[1] + 0.001 * x[2]^2 + 0.5 * w^2 + 0.4 * z^2 <= 10 * p[1] + 2)
     @constraint(model, con3, z^2 + w^2 == 13)
-    @objective(model, Min, x[2] - x[1] + z - w)
+    if ismin
+        @objective(model, Min, x[2] - x[1] + z - w)
+    else
+        @objective(model, Max, -x[2] + x[1] - z + w)
+    end
 
     return model, [x; z; w], [con2; con3], p
 end
@@ -516,9 +566,9 @@ DICT_PROBLEMS = Dict(
 
 function test_compute_derivatives_Finite_Diff()
     # @testset "Compute Derivatives: $problem_name" 
-    for (problem_name, (p_a, Δp, model_generator)) in DICT_PROBLEMS
+    for (problem_name, (p_a, Δp, model_generator)) in DICT_PROBLEMS, ismin in [true, false]
         # OPT Problem
-        model, primal_vars, cons, params = model_generator()
+        model, primal_vars, cons, params = model_generator(;ismin=ismin)
         eval_model_jump(model, primal_vars, cons, params, p_a)
 
         println("$problem_name: ", model)

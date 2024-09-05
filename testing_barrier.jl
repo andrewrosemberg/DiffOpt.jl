@@ -14,7 +14,6 @@ include("nlp_utilities.jl")
 include("nlp_utilities_test.jl")
 include("opf.jl")
 
-
 test_compute_optimal_hess_jacobian()
 
 test_compute_derivatives()
