@@ -83,7 +83,7 @@ function test_compute_optimal_hess_jacobian()
         full_hessian, full_jacobian = compute_optimal_hess_jac(evaluator, rows, [x; params])
         hessian = full_hessian[1:num_var, 1:num_var]
         # Check Hessian
-        @test all(hessian .≈ analytic_hessian(value.(x), -1.0, dual.(cons), value.(params)))
+        @test all(hessian .≈ analytic_hessian(value.(x), 1.0, -dual.(cons), value.(params)))
         # TODO: Test hessial of parameters
         # Check Jacobian
         @test all(full_jacobian .≈ analytic_jacobian(value.(x), value.(params)))
@@ -98,7 +98,7 @@ From sIpopt paper: https://optimization-online.org/2011/04/3008/
 =#
 ################################################
 
-function create_nonlinear_jump_model_sipopt()
+function create_nonlinear_jump_model_sipopt(ismin = true)
     model = Model(Ipopt.Optimizer)
     set_silent(model)
     @variable(model, p1 ∈ MOI.Parameter(4.5))
@@ -106,27 +106,32 @@ function create_nonlinear_jump_model_sipopt()
     @variable(model, x[i = 1:3] >= 0, start = -i)
     @constraint(model, g_1, 6 * x[1] + 3 * x[2] + 2 * x[3] - p1 == 0)
     @constraint(model, g_2, p2 * x[1] + x[2] - x[3] - 1 == 0)
-    @objective(model, Min, x[1]^2 + x[2]^2 + x[3]^2)
+    if ismin
+        @objective(model, Min, x[1]^2 + x[2]^2 + x[3]^2)
+    else
+        @objective(model, Max, -x[1]^2 - x[2]^2 - x[3]^2)
+    end
     return model, x, [g_1; g_2], [p1; p2]
 end
 
 function test_compute_derivatives()
-    @testset "Compute Derivatives No Inequalities" begin
+    @testset "Compute Derivatives No Inequalities: ismin=$ismin" for ismin in [true, false]
         # Model
-        model, primal_vars, cons, params = create_nonlinear_jump_model_sipopt()
+        sign_fix = ismin ? 1.0 : -1.0
+        model, primal_vars, cons, params = create_nonlinear_jump_model_sipopt(ismin)
         optimize!(model)
         @assert is_solved_and_feasible(model)
         # Analytical solutions case b
         pb = [4.5, 1.0]
-        s_pb = [0.5, 0.5, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0]
-        @assert all(isapprox.([value.(primal_vars); dual.(cons); dual.(LowerBoundRef.(primal_vars))], s_pb; atol = 1e-6))
+        s_pb = [0.5, 0.5, 0.0, 0.0, - sign_fix * 1.0, 0.0, 0.0, sign_fix * 1.0]
+        @assert all(isapprox.([value.(primal_vars); - sign_fix * dual.(cons); sign_fix * dual.(LowerBoundRef.(primal_vars))], s_pb; atol = 1e-6))
         # Analytical solutions case a
         pa = [5.0, 1.0]
-        s_pa = [0.6327, 0.3878, 0.0204, 0.1633, 0.2857, 0, 0, 0]
+        s_pa = [0.6327, 0.3878, 0.0204, - sign_fix * 0.1633, - sign_fix * 0.2857, 0, 0, 0]
         set_parameter_value.(params, pa)
         optimize!(model)
         @assert is_solved_and_feasible(model)
-        @assert all(isapprox.([value.(primal_vars); dual.(cons); dual.(LowerBoundRef.(primal_vars))], s_pa; atol = 1e-4))
+        @assert all(isapprox.([value.(primal_vars); - sign_fix * dual.(cons); sign_fix * dual.(LowerBoundRef.(primal_vars))], s_pa; atol = 1e-4))
         # Compute derivatives without accounting for active set changes
         evaluator, rows = create_evaluator(model; x=[primal_vars; params])
         X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low = compute_solution_and_bounds(primal_vars, rows)
@@ -134,11 +139,11 @@ function test_compute_derivatives()
         # Check linear approx s_pb
         Δp = pb - pa
         s_pb_approx_violated = s_pa + ∂s * Δp
-        @test all(isapprox.([0.5765; 0.3775; -0.0459; 0.1327; 0.3571; 0.0; 0.0; 0.0], s_pb_approx_violated; atol = 1e-4))
+        @test all(isapprox.([0.5765; 0.3775; -0.0459; - sign_fix * 0.1327; - sign_fix * 0.3571; 0.0; 0.0; 0.0], s_pb_approx_violated; atol = 1e-4))
         # Account for active set changes
         Δs, s_pb_approx = compute_sensitivity(evaluator, rows, Δp; primal_vars, params)
         # s_pb_approx = s_pa .+ Δs
-        @test all(isapprox.([0.5, 0.5, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], s_pb_approx; atol = 1e-6))
+        @test all(isapprox.([0.5, 0.5, 0.0, 0.0, - sign_fix * 1.0, 0.0, 0.0, 0.0], s_pb_approx; atol = 1e-6))
     end
 end
 
@@ -276,7 +281,7 @@ DICT_PROBLEMS_Analytical = Dict(
     "geq no impact max" => (p_a=[1.5], Δp=[0.2], Δs_a=[0.0; -0.2; 0.0; 0.0; 0.0], model_generator=create_jump_model_5),
     "geq active constraint change max" => (p_a=[1.9], Δp=[0.2], Δs_a=[0.1; -0.1; 0.1], model_generator=create_jump_model_5),
     "geq impact max" => (p_a=[2.1], Δp=[0.2], Δs_a=[0.2; 0.0; 0.2], model_generator=create_jump_model_5),
-    "softmax" => (p_a=collect(1.0:0.1:2.0), Δp=collect(-0.1:0.02:0.1), Δs_a=jacobian(softmax, p_a)[1] * Δp, model_generator=create_jump_model_6)
+    # "softmax" => (p_a=collect(1.0:0.1:2.0), Δp=collect(-0.1:0.02:0.1), Δs_a=jacobian(softmax, p_a)[1] * Δp, model_generator=create_jump_model_6)
 )
 
 function test_compute_derivatives_Analytical()

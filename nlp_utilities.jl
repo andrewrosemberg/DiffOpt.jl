@@ -46,18 +46,23 @@ function fill_off_diagonal(H)
     return ret
 end
 
+sense_mult(x) = JuMP.objective_sense(owner_model(x)) == MOI.MIN_SENSE ? 1.0 : -1.0
+sense_mult(x::Vector) = sense_mult(x[1])
+
 """
     compute_optimal_hessian(evaluator::MOI.Nonlinear.Evaluator, rows::Vector{ConstraintRef}, x::Vector{VariableRef})
 
 Compute the optimal Hessian of the Lagrangian.
 """
 function compute_optimal_hessian(evaluator::MOI.Nonlinear.Evaluator, rows::Vector{ConstraintRef}, x::Vector{VariableRef})
-    sense_multiplier = objective_sense(owner_model(x[1])) == MOI.MIN_SENSE ? -1.0 : 1.0
+    sense_multiplier = objective_sense(owner_model(x[1])) == MOI.MIN_SENSE ? 1.0 : -1.0
     hessian_sparsity = MOI.hessian_lagrangian_structure(evaluator)
     I = [i for (i, _) in hessian_sparsity]
     J = [j for (_, j) in hessian_sparsity]
     V = zeros(length(hessian_sparsity))
-    MOI.eval_hessian_lagrangian(evaluator, V, value.(x), sense_multiplier, dual.(rows))
+    # The signals are being sdjusted to match the Ipopt convention (inner.mult_g)
+    # but we don't know if we need to adjust the objective function multiplier
+    MOI.eval_hessian_lagrangian(evaluator, V, value.(x), 1.0, - sense_multiplier * dual.(rows))
     H = SparseArrays.sparse(I, J, V, length(x), length(x))
     return fill_off_diagonal(H)
 end
@@ -74,7 +79,7 @@ function compute_optimal_jacobian(evaluator::MOI.Nonlinear.Evaluator, rows::Vect
     V = zeros(length(jacobian_sparsity))
     MOI.eval_constraint_jacobian(evaluator, V, value.(x))
     A = SparseArrays.sparse(I, J, V, length(rows), length(x))
-    return A # Matrix(A)
+    return A
 end
 
 """
@@ -170,9 +175,10 @@ function get_slack_inequality(con::ConstraintRef)
     set_type = typeof(MOI.get(owner_model(con), MOI.ConstraintSet(), con))
     obj = constraint_object(con)
     if set_type <: MOI.LessThan
-        # c(x) <= b --> slack = -c(x) + b | slack >= 0
+        # c(x) <= b --> slack = c(x) - b | slack <= 0
         return obj.func - obj.set.upper 
     end
+    # c(x) >= b --> slack = c(x) - b | slack >= 0
     return obj.func - obj.set.lower
 end
 
@@ -182,6 +188,7 @@ end
 Compute the solution and bounds of the primal variables.
 """
 function compute_solution_and_bounds(primal_vars::Vector{VariableRef}, cons::Vector{C}) where {C<:ConstraintRef}
+    sense_multiplier = sense_mult(primal_vars)
     num_vars = length(primal_vars)
     leq_locations, geq_locations = find_inequealities(cons)
     ineq_locations = vcat(geq_locations, leq_locations)
@@ -199,21 +206,31 @@ function compute_solution_and_bounds(primal_vars::Vector{VariableRef}, cons::Vec
     V_L = spzeros(num_vars+num_ineq)
     X_L = spzeros(num_vars+num_ineq)
     for (i, j) in enumerate(has_low)
-        V_L[i] = dual.(LowerBoundRef(primal_vars[j]))
+        V_L[i] = dual.(LowerBoundRef(primal_vars[j])) * sense_multiplier
+        #
+        V_L[i] <= -1e-6 && @info "Dual of lower bound must be positive" i V_L[i]
+        #
         X_L[i] = JuMP.lower_bound(primal_vars[j])
     end
     for (i, con) in enumerate(cons[geq_locations])
-        V_L[num_vars+i] = dual.(con)
+        V_L[num_vars+i] = dual.(con) * (- sense_multiplier)
+        #
+        V_L[num_vars+i] <= -1e-6 && @info "Dual of geq constraint must be positive" i V_L[num_vars+i]
     end
     # value and dual of the upper bounds
     V_U = spzeros(num_vars+num_ineq)
     X_U = spzeros(num_vars+num_ineq)
     for (i, j) in enumerate(has_up)
-        V_U[i] = dual.(UpperBoundRef(primal_vars[j]))
+        V_U[i] = dual.(UpperBoundRef(primal_vars[j])) * (- sense_multiplier)
+        #
+        V_U[i] <= -1e-6 && @info "Dual of upper bound must be positive" i V_U[i]
+        #
         X_U[i] = JuMP.upper_bound(primal_vars[j])
     end
     for (i, con) in enumerate(cons[leq_locations])
-        V_U[num_vars+i] = dual.(con)
+        V_U[num_vars+i] = dual.(con) * (- sense_multiplier)
+        #
+        V_U[num_vars+i] <= -1e-6 && @info "Dual of leq constraint must be non-positive" i V_U[num_vars+i]
     end
 
     return X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, vcat(has_up, collect(num_vars+num_geq+1:num_vars+num_geq+num_leq)), vcat(has_low, collect(num_vars+1:num_vars+num_geq))
@@ -271,14 +288,21 @@ function build_M_N(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRe
     # Hessian of the lagrangian wrt the primal variables
     W = spzeros(num_vars + num_ineq, num_vars + num_ineq)
     W[1:num_vars, 1:num_vars] = hessian[1:num_vars, 1:num_vars]
-    # Jacobian of the constraints wrt the primal variables
+    # Jacobian of the constraints
     A = spzeros(num_cons, num_vars + num_ineq)
+    # A is the Jacobian of: c(x) = b and c(x) <= b and c(x) >= b, possibly all mixed up.
+    # Each of the will be re-written as:
+    # c(x) - b = 0
+    # c(x) - b - su = 0, su <= 0
+    # c(x) - b - sl = 0, sl >= 0
+    # Jacobian of the constraints wrt the primal variables
     A[:, 1:num_vars] = jacobian[:, 1:num_vars]
+    # Jacobian of the constraints wrt the slack variables
     for (i,j) in enumerate(geq_locations)
         A[j, num_vars+i] = -1
     end
     for (i,j) in enumerate(leq_locations)
-        A[j, num_vars+i] = 1
+        A[j, num_vars+i] = -1
     end
     # Partial second derivative of the lagrangian wrt primal solution and parameters
     ∇ₓₚL = spzeros(num_vars + num_ineq, num_parms)
@@ -485,6 +509,7 @@ end
 function compute_sensitivity(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{ConstraintRef}, 
     Δp; primal_vars=all_primal_vars(model), params=all_params(model), tol=1e-6
 )
+    sense_multiplier = sense_mult(primal_vars)
     num_cons = length(cons)
     num_var = length(primal_vars)
     # Solution and bounds
@@ -493,29 +518,30 @@ function compute_sensitivity(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     # ∂s = [∂x; ∂λ; ∂ν_L; ∂ν_U]
     ∂s, K, N = compute_derivatives_no_relax(evaluator, cons, primal_vars, params, X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low)
     if isnothing(Δp) || iszero(Δp)
-        Λ = dual.(cons)
+        Λ = - dual.(cons) * sense_multiplier
         sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], ∂s * ones(size(∂s, 2)))
         return ∂s, sp
     end
     Δs = ∂s * Δp
     num_bounds = length(has_up) + length(has_low)
-    Λ = dual.(cons)
+
+    Λ = - dual.(cons) * sense_multiplier
     num_geq = length(geq_locations)
     num_leq = length(leq_locations)
-    for i in 1:num_leq # slack of leq constraints
-        Δs[num_var+num_geq+i] = - Δs[num_var+num_geq+i]
-    end
-    Δs[end-num_bounds+1:end] = Δs[end-num_bounds+1:end] .* -1.0 # Correcting the sign of the bounds duals for the standard form
+    # for i in 1:num_leq # slack of leq constraints
+    #     Δs[num_var+num_geq+i] = - Δs[num_var+num_geq+i]
+    # end
+    # Δs[end-num_bounds+1:end] = Δs[end-num_bounds+1:end] .* -1.0 # Correcting the sign of the bounds duals for the standard form
     sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
     # Linearly appoximated solution
     E, r1 = find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
     if !isempty(r1)
         @warn "Relaxation needed"
         Δs = fix_and_relax(E, K, N, r1, Δp)
-        for i in 1:num_leq # slack of leq constraints
-            Δs[num_var+num_geq+i] = - Δs[num_var+num_geq+i]
-        end
-        Δs[end-num_bounds+1:end] = Δs[end-num_bounds+1:end] .* -1.0 # Correcting the sign of the bounds duals for the standard form
+        # for i in 1:num_leq # slack of leq constraints
+        #     Δs[num_var+num_geq+i] = - Δs[num_var+num_geq+i]
+        # end
+        # Δs[end-num_bounds+1:end] = Δs[end-num_bounds+1:end] .* -1.0 # Correcting the sign of the bounds duals for the standard form
         sp = approximate_solution(X, Λ, V_L[has_low], V_U[has_up], Δs)
     end
     return Δs, sp
