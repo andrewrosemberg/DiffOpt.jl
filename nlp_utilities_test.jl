@@ -107,8 +107,7 @@ function test_compute_derivatives()
         @assert all(isapprox.([value.(primal_vars); dual.(cons); dual.(LowerBoundRef.(primal_vars))], s_pa; atol = 1e-4))
         # Compute derivatives without accounting for active set changes
         evaluator, rows = create_evaluator(model; x=[primal_vars; params])
-        X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low = compute_solution_and_bounds(primal_vars, rows)
-        ∂s, K, N = compute_derivatives_no_relax(evaluator, rows, primal_vars, params, X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low)
+        ∂s, s_pb_approx = compute_sensitivity(evaluator, rows, nothing; primal_vars, params)
         # Check linear approx s_pb
         Δp = pb - pa
         s_pb_approx_violated = s_pa + ∂s * Δp
@@ -133,7 +132,7 @@ end
 
 DICT_PROBLEMS_Analytical_no_cc = Dict(
     "geq no impact" => (p_a=[1.5], Δp=[0.2], Δs_a=[0.0; -0.2; 0.0; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_1),
-    "geq impact" => (p_a=[2.1], Δp=[0.2], Δs_a=[0.2; 0.0; 0.2; -0.4; 0.0; 0.4; 0.0], model_generator=create_jump_model_1),
+    "geq impact" => (p_a=[2.1], Δp=[0.2], Δs_a=[0.2; 0.0; 0.2; 0.4; 0.0; 0.4; 0.0], model_generator=create_jump_model_1),
     "geq bound impact" => (p_a=[2.1], Δp=[0.2], Δs_a=[0.2; 0.0; 0.4; 0.0; 0.4], model_generator=create_jump_model_2),
     "leq no impact" => (p_a=[-1.5], Δp=[-0.2], Δs_a=[0.0; 0.2; 0.0; 0.0; 0.0; 0.0; 0.0], model_generator=create_jump_model_3),
     "leq impact" => (p_a=[-2.1], Δp=[-0.2], Δs_a=[-0.2; 0.0; -0.2], model_generator=create_jump_model_3),

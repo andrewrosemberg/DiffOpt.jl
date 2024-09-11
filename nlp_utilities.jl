@@ -425,18 +425,6 @@ function compute_derivatives_no_relax(evaluator::MOI.Nonlinear.Evaluator, cons::
     # ∂s = - (K \ N) # Sensitivity
     ldiv!(∂s, K, N)
     ∂s = - ∂s
-
-    ## Adjust signs based on JuMP convention
-    sense_multiplier = sense_mult(primal_vars)
-    num_lower = length(has_low)
-    num_w = length(_X)
-    num_cons = length(cons)
-    # Duals
-    ∂s[num_w+1:num_w+num_cons, :] *= -sense_multiplier
-    # Dual bounds lower
-    ∂s[num_w+num_cons+1:num_w+num_cons+num_lower, :] *= sense_multiplier
-    # Dual bounds upper
-    ∂s[num_w+num_cons+num_lower+1:end, :] *= -sense_multiplier
     
     return ∂s, K, N
 end
@@ -446,7 +434,7 @@ end
 
 Fix the violations and relax complementary slackness.
 """
-function fix_and_relax(E, K, N, r1, Δp, num_w, num_cons, num_lower, sense_multiplier)
+function fix_and_relax(E, K, N, r1, Δp)
     rs = (N * Δp)[:,:]
     # C = −E' inv(K) E
     # C = - E' * (K \ E)
@@ -467,14 +455,6 @@ function fix_and_relax(E, K, N, r1, Δp, num_w, num_cons, num_lower, sense_multi
     aux = - (rs + E * ∆ν¯)[:,:]
     ∆s = zeros(size(K, 1), size(aux, 2))
     ldiv!(∆s, K, aux)
-
-    ## Adjust signs based on JuMP convention
-    # Duals
-    ∆s[num_w+1:num_w+num_cons, :] *= -sense_multiplier
-    # Dual bounds lower
-    ∆s[num_w+num_cons+1:num_w+num_cons+num_lower, :] *= sense_multiplier
-    # Dual bounds upper
-    ∆s[num_w+num_cons+num_lower+1:end, :] *= -sense_multiplier
 
     return ∆s
 end
@@ -504,7 +484,7 @@ end
 
 Find the bound violations of the primal-dual solution first order approximation based on the (unrelaxed) sensitivity estimation.
 """
-function find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol) #, ismin)
+function find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol, ismin)
     num_w = length(X)
     num_low = length(has_low)
     num_up = length(has_up)
@@ -517,19 +497,19 @@ function find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, t
             push!(_E, i)
             push!(r1, X[i] - X_L[i])
         end
-        # if ismin
+        if ismin
             if sp[num_w+num_cons+j] < -tol
                 println("Violation LB Dual: ", i, " ", sp[num_w+num_cons+j], " ", V_L[i])
                 push!(_E, num_w+num_cons+j)
                 push!(r1, V_L[i])
             end
-        # else
-        #     if sp[num_w+num_cons+j] > tol
-        #         println("Violation LB Dual: ", i, " ", sp[num_w+num_cons+j], " ", V_L[i])
-        #         push!(_E, num_w+num_cons+j)
-        #         push!(r1, V_L[i])
-        #     end
-        # end
+        else
+            if sp[num_w+num_cons+j] > tol
+                println("Violation LB Dual: ", i, " ", sp[num_w+num_cons+j], " ", V_L[i])
+                push!(_E, num_w+num_cons+j)
+                push!(r1, V_L[i])
+            end
+        end
     end
     for (j, i) in enumerate(has_up)
         if sp[i] > X_U[i] + tol
@@ -537,19 +517,19 @@ function find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, t
             push!(_E, i)
             push!(r1, X_U[i] - X[i])
         end
-        # if ismin
+        if ismin
             if sp[num_w+num_cons+num_low+j] < -tol
                 println("Violation UB Dual: ", i, " ", sp[num_w+num_cons+num_low+j], " ", V_U[i])
                 push!(_E, num_w+num_cons+num_low+j)
                 push!(r1, V_U[i])
             end
-        # else
-        #     if sp[num_w+num_cons+num_low+j] > tol
-        #         println("Violation UB Dual: ", i, " ", sp[num_w+num_cons+num_low+j], " ", V_U[i])
-        #         push!(_E, num_w+num_cons+num_low+j)
-        #         push!(r1, V_U[i])
-        #     end
-        # end
+        else
+            if sp[num_w+num_cons+num_low+j] > tol
+                println("Violation UB Dual: ", i, " ", sp[num_w+num_cons+num_low+j], " ", V_U[i])
+                push!(_E, num_w+num_cons+num_low+j)
+                push!(r1, V_U[i])
+            end
+        end
     end
     
     E = spzeros(num_w + num_cons + num_low + num_up, length(_E))
@@ -571,22 +551,37 @@ function compute_sensitivity(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     # Solution and bounds
     X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low = compute_solution_and_bounds(primal_vars, cons)
     # Compute derivatives
+    num_w = length(X)
+    num_lower = length(has_low)
     # ∂s = [∂x; ∂λ; ∂ν_L; ∂ν_U]
     ∂s, K, N = compute_derivatives_no_relax(evaluator, cons, primal_vars, params, X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low)
-    Λ = dual.(cons)
     if isnothing(Δp) || iszero(Δp)
-        sp = approximate_solution(X, Λ, V_L[has_low] .* (sense_multiplier), V_U[has_up].* (-sense_multiplier), ∂s * ones(size(∂s, 2)))
+        ## Adjust signs based on JuMP convention
+        # Duals
+        ∂s[num_w+1:num_w+num_cons, :] *= -sense_multiplier
+        # Dual bounds lower
+        ∂s[num_w+num_cons+1:num_w+num_cons+num_lower, :] *= sense_multiplier
+        # Dual bounds upper
+        ∂s[num_w+num_cons+num_lower+1:end, :] *= -sense_multiplier
+        sp = approximate_solution(X, dual.(cons), V_L[has_low] .* (sense_multiplier), V_U[has_up].* (-sense_multiplier), ∂s * ones(size(∂s, 2)))
         return ∂s, sp
     end
     Δs = ∂s * Δp
-    sp = approximate_solution(X, Λ, V_L[has_low] .* (sense_multiplier), V_U[has_up].* (-sense_multiplier), Δs)
+    sp = approximate_solution(X, - sense_multiplier * dual.(cons), V_L[has_low], V_U[has_up], Δs)
     # Linearly appoximated solution
-    E, r1 = find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol)
+    E, r1 = find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, tol, ismin)
     if !isempty(r1)
         @warn "Relaxation needed"
-        Δs = fix_and_relax(E, K, N, r1, Δp, length(X), num_cons, length(has_low), sense_multiplier)
-        sp = approximate_solution(X, Λ, V_L[has_low] .* (sense_multiplier), V_U[has_up].* (-sense_multiplier), Δs)
+        Δs = fix_and_relax(E, K, N, r1, Δp)
     end
+    ## Adjust signs based on JuMP convention
+    # Duals
+    Δs[num_w+1:num_w+num_cons, :] *= -sense_multiplier
+    # Dual bounds lower
+    Δs[num_w+num_cons+1:num_w+num_cons+num_lower, :] *= sense_multiplier
+    # Dual bounds upper
+    Δs[num_w+num_cons+num_lower+1:end, :] *= -sense_multiplier
+    sp = approximate_solution(X, dual.(cons), V_L[has_low] .* (sense_multiplier), V_U[has_up].* (-sense_multiplier), Δs)
     return Δs, sp
 end
 
