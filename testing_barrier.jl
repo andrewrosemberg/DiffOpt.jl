@@ -14,13 +14,21 @@ include("nlp_utilities.jl")
 include("nlp_utilities_test.jl")
 include("opf.jl")
 
+# No Fix
+
 test_compute_optimal_hess_jacobian()
+
+test_compute_derivatives_Finite_Diff(DICT_PROBLEMS_no_cc, false)
+
+test_compute_derivatives_Analytical(DICT_PROBLEMS_Analytical_no_cc)
+
+# Fix and Relax
 
 test_compute_derivatives()
 
-test_compute_derivatives_Finite_Diff()
+test_compute_derivatives_Finite_Diff(DICT_PROBLEMS_cc, true)
 
-test_compute_derivatives_Analytical()
+test_compute_derivatives_Analytical(DICT_PROBLEMS_Analytical_cc)
 
 ################################################
 # Strategic bidding test
