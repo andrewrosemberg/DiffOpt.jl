@@ -268,13 +268,13 @@ function test_compute_derivatives_Finite_Diff(DICT_PROBLEMS, iscc=false)
         # OPT Problem
         model, primal_vars, cons, params = model_generator(;ismin=ismin)
         eval_model_jump(model, primal_vars, cons, params, p_a)
-
         println("$problem_name: ", model)
         # Compute derivatives
         # Δp = [0.001; 0.0; 0.0]
         p_b = p_a .+ Δp
         (Δs, sp_approx), evaluator, cons = compute_sensitivity(model, Δp; primal_vars, params)
         leq_locations, geq_locations = find_inequealities(cons)
+        sa = stack_solution(cons, leq_locations, geq_locations, eval_model_jump(model, primal_vars, cons, params, p_a)...)
         # Check derivatives using finite differences
         ∂s_fd = FiniteDiff.finite_difference_jacobian((p) -> stack_solution(cons, leq_locations, geq_locations, eval_model_jump(model, primal_vars, cons, params, p)...), p_a)
         Δs_fd = ∂s_fd * Δp
@@ -282,13 +282,17 @@ function test_compute_derivatives_Finite_Diff(DICT_PROBLEMS, iscc=false)
         sp = stack_solution(cons, leq_locations, geq_locations, eval_model_jump(model, primal_vars, cons, params, p_b)...)
         # Check sensitivities
         num_important = length(primal_vars) + length(cons)
-        if all(isapprox.(Δs, Δs_fd; rtol = 1e-5, atol=1e-6)) || (iscc && all(isapprox.(sp[1:num_important], sp_approx[1:num_important]; rtol = 1e-5, atol=1e-6)))
+        test_derivatives = all(isapprox.(Δs, Δs_fd; rtol = 1e-5, atol=1e-6))
+        test_approx = all(isapprox.(sp[1:num_important], sp_approx[1:num_important]; rtol = 1e-5, atol=1e-6))
+        if test_derivatives || (iscc && test_approx)
             println("All sensitivities are correct")
+        elseif iscc && !test_approx
+            @show Δp
+            println("Fail Approximations")
+            print_wrong_sensitive(Δs, sp.-sa, primal_vars, cons, leq_locations, geq_locations)
         else
-            @show Δp 
+            @show Δp
             print_wrong_sensitive(Δs, Δs_fd, primal_vars, cons, leq_locations, geq_locations)
-            # Check solution
-            println(all(isapprox.(sp[1:num_important], sp_approx[1:num_important]; atol = 1e-6)))
         end
         println("--------------------")
     end

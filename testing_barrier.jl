@@ -38,9 +38,9 @@ test_compute_derivatives_Analytical(DICT_PROBLEMS_Analytical_cc)
 # Random.seed!(1234)
 # @time test_bilevel_ac_strategic_bidding("pglib_opf_case24_ieee_rts"; percen_bidding_nodes=0.1)
 
-# casename = "pglib_opf_case300_ieee"
-# Random.seed!(1234)
-# @time test_bilevel_ac_strategic_bidding(casename; percen_bidding_nodes=0.1)
+casename = "pglib_opf_case300_ieee"
+Random.seed!(1234)
+@time test_bilevel_ac_strategic_bidding(casename; percen_bidding_nodes=0.1, Δp=nothing)
 # Δp=0.0 (no derivative): time=4.61s | obj= $474.18
 # Δp=nothing (no restoration): time=452.65s | obj= $79886.16
 # Δp=0.001 (with derivative): time=54.64s | obj= $474.18
