@@ -515,7 +515,7 @@ function find_violations(X, sp, X_L, X_U, V_U, V_L, has_up, has_low, num_cons, t
         if sp[i] > X_U[i] + tol
             println("Violation UB Var: ", i, " ", sp[i], " ", X_U[i])
             push!(_E, i)
-            push!(r1, X_U[i] - X[i])
+            push!(r1, X[i] - X_U[i])
         end
         if ismin
             if sp[num_w+num_cons+num_low+j] < -tol
