@@ -192,8 +192,8 @@ function build_bidding_opf_model(case_name; percen_bidding_nodes=0.1, solver=Ipo
     )
 end
 
-function build_bidding_upper(num_bidding_nodes, pmax)
-    upper_model = Model(Ipopt.Optimizer)
+function build_bidding_upper(num_bidding_nodes, pmax; solver=Ipopt.Optimizer)
+    upper_model = Model(solver)
 
     @variable(upper_model, 0 <= pg_bid[i=1:num_bidding_nodes] <= pmax)
     @variable(upper_model, pg[i=1:num_bidding_nodes])
@@ -246,14 +246,14 @@ function fdiff_derivatives(f::Function)
     return ∇f, ∇²f
 end
 
-function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; percen_bidding_nodes=0.1, Δp=0.0001)
+function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; percen_bidding_nodes=0.1, Δp=0.0001, solver_upper=Ipopt.Optimizer, solver_lower=Ipopt.Optimizer)
     # test derivative of the dual of the demand equilibrium constraint
-    data = build_bidding_opf_model(case_name; percen_bidding_nodes=percen_bidding_nodes)
+    data = build_bidding_opf_model(case_name; percen_bidding_nodes=percen_bidding_nodes, solver=solver_lower)
     pmax = data["pmax"]
     primal_vars = [data["bidding_generators_dispatch"]; data["model_variables"]]
     num_bidding_nodes = length(data["bidding_generators_dispatch"])
     set_parameter_value.(data["bid"], 0.01)
-    optimize!(data["model"])
+    JuMP.optimize!(data["model"])
     evaluator, cons = create_evaluator(data["model"]; x=[primal_vars; data["bid"]])
     leq_locations, geq_locations = find_inequealities(cons)
     num_ineq = length(leq_locations) + length(geq_locations)
@@ -266,17 +266,17 @@ function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; pe
     # Δs, sp = compute_sensitivity(evaluator, cons, Δp; primal_vars=primal_vars, params=data["bid"])
     
     # set_parameter_value.(data["bid"], 0.5 .+ Δp)
-    # optimize!(data["model"])
+    # JuMP.optimize!(data["model"])
 
     # @test dual.(data["bidding_lmps"]) ≈ Δs[(num_primal + num_ineq) .+ bidding_lmps_index]
 
     # test bilevel strategic bidding
-    upper_model, lambda, pg_bid, pg = build_bidding_upper(num_bidding_nodes, pmax)
+    upper_model, lambda, pg_bid, pg = build_bidding_upper(num_bidding_nodes, pmax; solver=solver_upper)
     evaluator, cons = create_evaluator(data["model"]; x=[primal_vars; data["bid"]])
 
     function f(pg_bid_val...)
         set_parameter_value.(data["bid"], pg_bid_val)
-        optimize!(data["model"])
+        JuMP.optimize!(data["model"])
         if !is_solved_and_feasible(data["model"])
             return nothing
         end
@@ -286,7 +286,7 @@ function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; pe
     function ∇f(g::AbstractVector{T}, pg_bid_val...) where {T}
         if value.(data["bid"]) == pg_bid_val
             set_parameter_value.(data["bid"], pg_bid_val)
-            optimize!(data["model"])
+            JuMP.optimize!(data["model"])
             @assert is_solved_and_feasible(data["model"])
         end
         
@@ -319,13 +319,90 @@ function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; pe
         @constraint(upper_model, lambda[i] == op_lambda(pg_bid...))
     end
 
-    optimize!(upper_model)
+    JuMP.optimize!(upper_model)
 
     println("Status: ", termination_status(upper_model))
     println("Objective: ", objective_value(upper_model))
     println("Duals: ", value.(lambda))
     println("Bids: ", value.(pg_bid))
     println("Dispatch: ", value.(pg))
+end
+
+function test_bidding_nlopt(case_name="pglib_opf_case5_pjm.m"; percen_bidding_nodes=0.1, Δp=0.0001, solver_upper=:LD_MMA, solver_lower=Ipopt.Optimizer, max_eval=100)
+    data = build_bidding_opf_model(case_name; percen_bidding_nodes=percen_bidding_nodes, solver=solver_lower)
+    pmax = data["pmax"]
+    primal_vars = [data["bidding_generators_dispatch"]; data["model_variables"]]
+    num_bidding_nodes = length(data["bidding_generators_dispatch"])
+    set_parameter_value.(data["bid"], 0.01)
+    JuMP.optimize!(data["model"])
+    evaluator, cons = create_evaluator(data["model"]; x=[primal_vars; data["bid"]])
+    leq_locations, geq_locations = find_inequealities(cons)
+    num_ineq = length(leq_locations) + length(geq_locations)
+    num_primal = length(primal_vars)
+    bidding_lmps_index = [findall(x -> x == i, cons)[1] for i in data["bidding_lmps"]]
+    if !isnothing(Δp)
+        Δp = fill(Δp, num_bidding_nodes)
+    end
+
+    evaluator, cons = create_evaluator(data["model"]; x=[primal_vars; data["bid"]])
+
+    function f(pg_bid_val...)
+        set_parameter_value.(data["bid"], pg_bid_val)
+        JuMP.optimize!(data["model"])
+        if !is_solved_and_feasible(data["model"])
+            return nothing
+        end
+        return [value.(data["bidding_generators_dispatch"]); -dual.(data["bidding_lmps"])]
+    end
+
+    function ∇f(pg_bid_val...) where {T}
+        if value.(data["bid"]) == pg_bid_val
+            set_parameter_value.(data["bid"], pg_bid_val)
+            JuMP.optimize!(data["model"])
+            @assert is_solved_and_feasible(data["model"])
+        end
+        
+        Δs, sp = compute_sensitivity(evaluator, cons, Δp; primal_vars=primal_vars, params=data["bid"])
+        if isnothing(Δp)
+            Δs = Δs * ones(size(Δs, 2))
+        end
+        # for i in 1:num_bidding_nodes
+        #     g[i] = Δs[i]
+        # end
+        # for (i, b_idx) in enumerate(bidding_lmps_index)
+        #     g[i] = -Δs[num_primal + num_ineq + b_idx]
+        # end
+        # return g
+        return [Δs[1:num_bidding_nodes]; -(Δs[(num_primal + num_ineq) .+ bidding_lmps_index])]
+    end
+
+    trace = Any[]
+    function my_objective_fn(pg_bid_val::Vector, grad::Vector)
+        pg, lmps = f(pg_bid_val...)
+        Δpg, Δlmps = ∇f(pg_bid_val...)
+        value = dot(lmps, pg)
+        if length(grad) > 0
+            grad .= dot(Δlmps, pg) .+ dot(lmps, Δpg)
+        end
+        
+        push!(trace, copy(pg_bid_val) => value)
+        return value
+    end
+
+    opt = NLopt.Opt(solver_upper, num_bidding_nodes)
+    NLopt.lower_bounds!(opt, fill(0.0, num_bidding_nodes))
+    NLopt.upper_bounds!(opt, fill(pmax, num_bidding_nodes))
+    NLopt.xtol_rel!(opt, 1e-4)
+    maxeval!(opt, max_eval)
+    NLopt.max_objective!(opt, my_objective_fn)
+    max_f, opt_x, ret = NLopt.optimize(opt, fill(0.001, num_bidding_nodes))
+    num_evals = NLopt.numevals(opt)
+    println("Status: ", ret)
+    println("Objective: ", max_f)
+    println("Bids: ", opt_x[1:num_bidding_nodes])
+    println("Duals: ", opt_x[num_bidding_nodes+1:end])
+    println("Number of evaluations: ", num_evals)
+    return max_f, num_evals, trace
 end
 
 function sesitivity_load(case_name="pglib_opf_case5_pjm.m"; Δp=nothing, solver=Ipopt.Optimizer)
@@ -335,7 +412,7 @@ function sesitivity_load(case_name="pglib_opf_case5_pjm.m"; Δp=nothing, solver=
     num_bus = length(ref[:bus])
     demand_equilibrium = [demand_equilibrium[i] for i in 1:num_bus]
 
-    optimize!(model)
+    JuMP.optimize!(model)
 
     params = vcat(pload.data, qload.data)
     all_primal_variables = all_variables(model)

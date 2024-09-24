@@ -1,3 +1,6 @@
+using JuMP
+using Ipopt
+
 model = JuMP.Model(Ipopt.Optimizer)
 
 @variable(model, x)
