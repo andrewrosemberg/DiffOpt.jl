@@ -284,7 +284,7 @@ function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; pe
     end
 
     function ∇f(g::AbstractVector{T}, pg_bid_val...) where {T}
-        if value.(data["bid"]) == pg_bid_val
+        if !all(value.(data["bid"]) .== pg_bid_val)
             set_parameter_value.(data["bid"], pg_bid_val)
             JuMP.optimize!(data["model"])
             @assert is_solved_and_feasible(data["model"])
@@ -349,37 +349,32 @@ function test_bidding_nlopt(case_name="pglib_opf_case5_pjm.m"; percen_bidding_no
     function f(pg_bid_val...)
         set_parameter_value.(data["bid"], pg_bid_val)
         JuMP.optimize!(data["model"])
-        if !is_solved_and_feasible(data["model"])
-            return nothing
-        end
+        @assert is_solved_and_feasible(data["model"])
+
         return [value.(data["bidding_generators_dispatch"]); -dual.(data["bidding_lmps"])]
     end
 
-    function ∇f(pg_bid_val...) where {T}
-        if value.(data["bid"]) == pg_bid_val
-            set_parameter_value.(data["bid"], pg_bid_val)
-            JuMP.optimize!(data["model"])
-            @assert is_solved_and_feasible(data["model"])
-        end
+    function ∇f(pg_bid_val...)
+        @assert all(value.(data["bid"]) .== pg_bid_val)
         
         Δs, sp = compute_sensitivity(evaluator, cons, Δp; primal_vars=primal_vars, params=data["bid"])
         if isnothing(Δp)
             Δs = Δs * ones(size(Δs, 2))
         end
-        # for i in 1:num_bidding_nodes
-        #     g[i] = Δs[i]
-        # end
-        # for (i, b_idx) in enumerate(bidding_lmps_index)
-        #     g[i] = -Δs[num_primal + num_ineq + b_idx]
-        # end
-        # return g
+
         return [Δs[1:num_bidding_nodes]; -(Δs[(num_primal + num_ineq) .+ bidding_lmps_index])]
+    end
+
+    if !isnothing(Δp) && iszero(Δp)
+        _∇f = (pg_bid_val...) -> zeros(num_bidding_nodes + length(bidding_lmps_index))
+    else
+        _∇f = ∇f
     end
 
     trace = Any[]
     function my_objective_fn(pg_bid_val::Vector, grad::Vector)
         pg, lmps = f(pg_bid_val...)
-        Δpg, Δlmps = ∇f(pg_bid_val...)
+        Δpg, Δlmps = _∇f(pg_bid_val...)
         value = dot(lmps, pg)
         if length(grad) > 0
             grad .= dot(Δlmps, pg) .+ dot(lmps, Δpg)

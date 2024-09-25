@@ -555,7 +555,7 @@ function compute_sensitivity(evaluator::MOI.Nonlinear.Evaluator, cons::Vector{Co
     num_lower = length(has_low)
     # ∂s = [∂x; ∂λ; ∂ν_L; ∂ν_U]
     ∂s, K, N = compute_derivatives_no_relax(evaluator, cons, primal_vars, params, X, V_L, X_L, V_U, X_U, leq_locations, geq_locations, ineq_locations, has_up, has_low)
-    if isnothing(Δp) || iszero(Δp)
+    if isnothing(Δp)
         ## Adjust signs based on JuMP convention
         # Duals
         ∂s[num_w+1:num_w+num_cons, :] *= -sense_multiplier
