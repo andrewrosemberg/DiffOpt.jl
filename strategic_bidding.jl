@@ -16,11 +16,11 @@ include("opf.jl")
 # Parameters
 max_eval = 100
 solver_lower = Ipopt.Optimizer
-casename = "pglib_opf_case300_ieee"
+casename = "pglib_opf_case1354_pegase"# "pglib_opf_case300_ieee"
 save_file = "results/strategic_bidding_nlopt_$(casename).csv"
 
 # #### test
-# solver_upper = :LD_CCSAQ # :LD_MMA :LN_BOBYQA
+# solver_upper = :LD_MMA # :LD_MMA :LN_BOBYQA
 # Random.seed!(1234)
 # start_time = time()
 # profit, num_evals, trace = test_bidding_nlopt(casename; percen_bidding_nodes=0.1, Δp=nothing, solver_lower=solver_lower, solver_upper=solver_upper, max_eval=2)
