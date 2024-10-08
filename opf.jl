@@ -156,6 +156,7 @@ function build_bidding_opf_model(case_name; percen_bidding_nodes=0.1, solver=Ipo
         data["gen"]["$(bidding_gen_ids[i])"] = build_gen(node, bidding_gen_ids[i], pmax, qmax)
     end
     data = make_basic_network(data)
+    total_market = sum([data["gen"][g]["pmax"] for g in keys(data["gen"])])
     
     model, ref, demand_equilibrium, p, q, pg, qg, va, vm, pload, qload = build_opf_model(data; solver=solver)
 
@@ -189,6 +190,7 @@ function build_bidding_opf_model(case_name; percen_bidding_nodes=0.1, solver=Ipo
         "model" => model,
         "bid" => _pg_bid,
         "pmax" => pmax,
+        "total_market" => total_market
     )
 end
 
@@ -328,9 +330,11 @@ function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; pe
     println("Dispatch: ", value.(pg))
 end
 
-function test_bidding_nlopt(case_name="pglib_opf_case5_pjm.m"; percen_bidding_nodes=0.1, Δp=0.0001, solver_upper=:LD_MMA, solver_lower=Ipopt.Optimizer, max_eval=100)
+function test_bidding_nlopt(case_name="pglib_opf_case5_pjm.m"; percen_bidding_nodes=0.1, Δp=0.0001, solver_upper=:LD_MMA, solver_lower=optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0), 
+    max_eval=100, pmax_multiplier=1.0
+)
     data = build_bidding_opf_model(case_name; percen_bidding_nodes=percen_bidding_nodes, solver=solver_lower)
-    pmax = data["pmax"]
+    pmax = data["pmax"] * pmax_multiplier
     primal_vars = [data["bidding_generators_dispatch"]; data["model_variables"]]
     num_bidding_nodes = length(data["bidding_generators_dispatch"])
     set_parameter_value.(data["bid"], 0.01)
@@ -351,7 +355,7 @@ function test_bidding_nlopt(case_name="pglib_opf_case5_pjm.m"; percen_bidding_no
         JuMP.optimize!(data["model"])
         @assert is_solved_and_feasible(data["model"])
 
-        return [value.(data["bidding_generators_dispatch"]); -dual.(data["bidding_lmps"])]
+        return value.(data["bidding_generators_dispatch"]), -dual.(data["bidding_lmps"])
     end
 
     function ∇f(pg_bid_val...)
@@ -362,11 +366,11 @@ function test_bidding_nlopt(case_name="pglib_opf_case5_pjm.m"; percen_bidding_no
             Δs = Δs * ones(size(Δs, 2))
         end
 
-        return [Δs[1:num_bidding_nodes]; -(Δs[(num_primal + num_ineq) .+ bidding_lmps_index])]
+        return Δs[1:num_bidding_nodes], -(Δs[(num_primal + num_ineq) .+ bidding_lmps_index])
     end
 
     if !isnothing(Δp) && iszero(Δp)
-        _∇f = (pg_bid_val...) -> zeros(num_bidding_nodes + length(bidding_lmps_index))
+        _∇f = (pg_bid_val...) -> zeros(num_bidding_nodes), zeros(length(bidding_lmps_index))
     else
         _∇f = ∇f
     end
@@ -379,7 +383,7 @@ function test_bidding_nlopt(case_name="pglib_opf_case5_pjm.m"; percen_bidding_no
         if length(grad) > 0
             grad .= dot(Δlmps, pg) .+ dot(lmps, Δpg)
         end
-        
+        # println("Objective: ", value)
         push!(trace, copy(pg_bid_val) => value)
         return value
     end
@@ -390,14 +394,14 @@ function test_bidding_nlopt(case_name="pglib_opf_case5_pjm.m"; percen_bidding_no
     NLopt.xtol_rel!(opt, 1e-4)
     maxeval!(opt, max_eval)
     NLopt.max_objective!(opt, my_objective_fn)
-    max_f, opt_x, ret = NLopt.optimize(opt, fill(0.001, num_bidding_nodes))
+    max_f, opt_x, ret = NLopt.optimize(opt, rand(num_bidding_nodes))
     num_evals = NLopt.numevals(opt)
     println("Status: ", ret)
     println("Objective: ", max_f)
     println("Bids: ", opt_x[1:num_bidding_nodes])
     println("Duals: ", opt_x[num_bidding_nodes+1:end])
     println("Number of evaluations: ", num_evals)
-    return max_f, num_evals, trace
+    return max_f, num_evals, trace, (sum(trace[end][1]) / data["total_market"]) * 100
 end
 
 function sesitivity_load(case_name="pglib_opf_case5_pjm.m"; Δp=nothing, solver=Ipopt.Optimizer)

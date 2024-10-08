@@ -15,11 +15,27 @@ include("opf.jl")
 
 # Parameters
 max_eval = 100
-solver_lower = Ipopt.Optimizer
-casename = "pglib_opf_case1354_pegase"# "pglib_opf_case300_ieee"
+solver_lower, solver_lower_name = optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0), "Ipopt"
+casename = "pglib_opf_case300_ieee"# "pglib_opf_case300_ieee"
 save_file = "results/strategic_bidding_nlopt_$(casename).csv"
 
-# #### test
+# #### test Range Evaluation
+# Random.seed!(1)
+# data = build_bidding_opf_model(casename)
+# # offer = rand(length(data["bidding_lmps"]))
+# # offer = zeros(length(data["bidding_lmps"])); offer[1] = 1.0; offer[2] = 1.0; offer[3] = 1.0; offer[4] = 1.0
+# offer = ones(length(data["bidding_lmps"]))
+# profits = []
+# start_time = time()
+# for val = 0.0:0.1:12
+#     set_parameter_value.(data["bid"], val * offer)
+#     JuMP.optimize!(data["model"])
+#     push!(profits, dot(-dual.(data["bidding_lmps"]), value.(data["bidding_generators_dispatch"])))
+# end
+# end_time = time()
+#### end test
+
+# #### test SB
 # solver_upper = :LD_MMA # :LD_MMA :LN_BOBYQA
 # Random.seed!(1234)
 # start_time = time()
@@ -28,7 +44,7 @@ save_file = "results/strategic_bidding_nlopt_$(casename).csv"
 #### end test
 
 # Experiments
-seeds = collect(1:3)
+seeds = collect(1:10)
 
 experiements = Dict(
     :LD_MMA => [nothing], # 0.001
@@ -51,13 +67,13 @@ experiements = Dict(
 # )
 
 # Check already executed experiments
-_experiments = [(string(solver_upper), string(solver_lower), string(Δp), seed) for (solver_upper, Δp_values) in experiements for Δp in Δp_values for seed in seeds]
+_experiments = [(string(solver_upper), solver_lower_name, string(Δp), seed) for (solver_upper, Δp_values) in experiements for Δp in Δp_values for seed in seeds]
 if isfile(save_file)
     old_results = CSV.read(save_file, DataFrame)
     _experiments = setdiff(_experiments, [(string(row.solver_upper), string(row.solver_lower), string(row.Δp), row.seed) for row in eachrow(old_results)])
 else
     open(save_file, "w") do f
-        write(f, "solver_upper,solver_lower,Δp,seed,profit,num_evals,time\n")
+        write(f, "solver_upper,solver_lower,Δp,seed,profit,market_share,num_evals,time\n")
     end
 end
 
@@ -67,15 +83,15 @@ for (_solver_upper, _, _Δp, seed) in _experiments
     Δp = _Δp == "nothing" ? nothing : parse(Float64, _Δp)
     Random.seed!(seed)
     start_time = time()
-    profit, num_evals, trace = test_bidding_nlopt(casename; percen_bidding_nodes=0.1, Δp=Δp, solver_lower=solver_lower, solver_upper=solver_upper, max_eval=max_eval)
+    profit, num_evals, trace, market_share = test_bidding_nlopt(casename; percen_bidding_nodes=0.1, Δp=Δp, solver_lower=solver_lower, solver_upper=solver_upper, max_eval=max_eval)
     end_time = time()
-    # push!(results, (string(solver_upper), string(solver_lower), string(Δp), seed, profit, num_evals, end_time - start_time))
+    # push!(results, (string(solver_upper), solver_lower_name, string(Δp), seed, profit, num_evals, end_time - start_time))
     open(save_file, "a") do f
-        write(f, "$solver_upper,$solver_lower,$Δp,$seed,$profit,$num_evals,$(end_time - start_time)\n")
+        write(f, "$solver_upper,$solver_lower_name,$Δp,$seed,$profit,$market_share,$num_evals,$(end_time - start_time)\n")
     end
 end
 
 # Save append results
-if isempty(results)
+if isempty(_experiments)
     @info "No new results"
 end
