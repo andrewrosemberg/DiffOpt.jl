@@ -370,7 +370,7 @@ function test_bidding_nlopt(case_name="pglib_opf_case5_pjm.m"; percen_bidding_no
     end
 
     if !isnothing(Δp) && iszero(Δp)
-        _∇f = (pg_bid_val...) -> zeros(num_bidding_nodes), zeros(length(bidding_lmps_index))
+        _∇f = (pg_bid_val...) -> (zeros(num_bidding_nodes), zeros(length(bidding_lmps_index)))
     else
         _∇f = ∇f
     end
