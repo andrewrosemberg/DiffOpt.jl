@@ -87,27 +87,56 @@ if isfile(save_file)
     old_results = CSV.read(save_file, DataFrame)
     _experiments = setdiff(_experiments, [(string(row.solver_upper), string(row.solver_lower), string(row.Δp), row.seed) for row in eachrow(old_results)])
 else
-    open(save_file, "w") do f
+    # open(save_file, "w") do f
+    #     write(f, "solver_upper,solver_lower,Δp,seed,profit,market_share,num_evals,time,status\n")
+    # end
+end
+
+for thread_id in 1:Threads.nthreads()
+    open(save_file * "_$thread_id", "w") do f
         write(f, "solver_upper,solver_lower,Δp,seed,profit,market_share,num_evals,time,status\n")
     end
 end
 
 # Run experiments
-for (_solver_upper, _, _Δp, seed) in _experiments
+# for (_solver_upper, _, _Δp, seed) in _experiments
+function run_experiment(_solver_upper, _Δp, seed, id)
     solver_upper = Symbol(_solver_upper)
     Δp = _Δp == "nothing" ? nothing : parse(Float64, _Δp)
-    Random.seed!(seed)
-    start_time = time()
-    profit, num_evals, trace, market_share, ret = test_bidding_nlopt(casename; percen_bidding_nodes=0.1, Δp=Δp, solver_lower=solver_lower, solver_upper=solver_upper, max_eval=max_eval)
-    end_time = time()
-    # push!(results, (string(solver_upper), solver_lower_name, string(Δp), seed, profit, num_evals, end_time - start_time))
-    ret = res[ret]
-    if ret < 0
+    try
+        Random.seed!(seed)
+        start_time = time()
+        profit, num_evals, trace, market_share, ret = test_bidding_nlopt(casename; percen_bidding_nodes=0.1, Δp=Δp, solver_lower=solver_lower, solver_upper=solver_upper, max_eval=max_eval)
+        end_time = time()
+        # push!(results, (string(solver_upper), solver_lower_name, string(Δp), seed, profit, num_evals, end_time - start_time))
+        ret = res[ret]
+        if ret < 0
+            @warn "Solver $(solver_upper) failed with seed $(seed)"
+            continue
+        else
+            open(save_file * "_$thread_id", "a") do f
+                write(f, "$solver_upper,$solver_lower_name,$Δp,$seed,$profit,$market_share,$num_evals,$(end_time - start_time),$ret\n")
+            end
+        end
+    catch e
         @warn "Solver $(solver_upper) failed with seed $(seed)"
         continue
-    else
+    end
+end
+
+# Run experiments on multiple threads
+Threads.@threads for (_solver_upper, _solver_lower, _Δp, seed) in _experiments
+    run_experiment(_solver_upper, _Δp, seed)
+end
+
+# Merge results
+for thread_id in 1:Threads.nthreads()
+    open(save_file * "_$thread_id", "r") do f
+        lines = readlines(f)
         open(save_file, "a") do f
-            write(f, "$solver_upper,$solver_lower_name,$Δp,$seed,$profit,$market_share,$num_evals,$(end_time - start_time),$ret\n")
+            for line in lines
+                write(f, line)
+            end
         end
     end
 end
@@ -144,7 +173,7 @@ for Δp in results_d.Δp
         push!(markers, :diamond)
     end
 end
-plt = scatter(results_d.market_share_mean, results_d.gap_mean, group=results_d.solver_upper, yerr=results_d.gap_std, 
+plt = scatter(results_d.market_share_mean, results_d.gap_mean, group=results_d.solver_upper, yerr=results_d.gap_std/2, 
     xlabel="Bid Volume (% of Market Share)", ylabel="Optimality Gap (%)", legend=:outertopright, marker=markers
 )
 
