@@ -107,7 +107,7 @@ function run_experiment(_solver_upper, _Δp, seed, id)
     try
         Random.seed!(seed)
         start_time = time()
-        profit, num_evals, trace, market_share, ret = test_bidding_nlopt(casename; percen_bidding_nodes=0.1, Δp=Δp, solver_lower=solver_lower, solver_upper=solver_upper, max_eval=max_eval)
+        profit, num_evals, trace, market_share, ret = test_bidding_nlopt(casename; percen_bidding_nodes=0.1, Δp=Δp, solver_upper=solver_upper, max_eval=max_eval)
         end_time = time()
         # push!(results, (string(solver_upper), solver_lower_name, string(Δp), seed, profit, num_evals, end_time - start_time))
         ret = res[ret]
