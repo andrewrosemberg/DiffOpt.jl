@@ -113,7 +113,7 @@ function run_experiment(_solver_upper, _Δp, seed, id)
         ret = res[ret]
         if ret < 0
             @warn "Solver $(solver_upper) failed with seed $(seed)"
-            continue
+            return nothing
         else
             open(save_file_name * "_$id" * ".csv", "a") do f
                 write(f, "$solver_upper,$solver_lower_name,$Δp,$seed,$profit,$market_share,$num_evals,$(end_time - start_time),$ret\n")
@@ -121,8 +121,9 @@ function run_experiment(_solver_upper, _Δp, seed, id)
         end
     catch e
         @warn "Solver $(solver_upper) failed with seed $(seed)"
-        continue
+        return nothing
     end
+    return nothing
 end
 
 # Run experiments on multiple threads
