@@ -1,14 +1,18 @@
-using JuMP, NLopt
-using DataFrames, CSV
-using SparseArrays
-using LinearAlgebra
-using Ipopt
-using Random
-using Logging
+using Distributed
 
-include("nlp_utilities.jl")
-include("nlp_utilities_test.jl")
-include("opf.jl")
+# addprocs()
+
+@everywhere using JuMP, NLopt
+@everywhere using DataFrames, CSV
+@everywhere using SparseArrays
+@everywhere using LinearAlgebra
+@everywhere using Ipopt
+@everywhere using Random
+@everywhere using Logging
+
+@everywhere include("nlp_utilities.jl")
+@everywhere include("nlp_utilities_test.jl")
+@everywhere include("opf.jl")
 
 ################################################
 # Strategic bidding test
@@ -16,7 +20,7 @@ include("opf.jl")
 
 # Parameters
 max_eval = 100
-solver_lower, solver_lower_name = optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0), "Ipopt"
+solver_lower_name = "Ipopt"
 casename = "pglib_opf_case2869_pegase" # "pglib_opf_case300_ieee" "pglib_opf_case1354_pegase" "pglib_opf_case2869_pegase"
 save_file_name = "results/strategic_bidding_nlopt_$(casename)"
 save_file = save_file_name * ".csv"
@@ -93,7 +97,7 @@ else
     # end
 end
 
-for thread_id in 1:Threads.nthreads()
+for thread_id in 1:nprocs()
     open(save_file_name * "_$thread_id" * ".csv", "w") do f
         write(f, "solver_upper,solver_lower,Δp,seed,profit,market_share,num_evals,time,status\n")
     end
@@ -101,7 +105,7 @@ end
 
 # Run experiments
 # for (_solver_upper, _, _Δp, seed) in _experiments
-function run_experiment(_solver_upper, _Δp, seed, id)
+@everywhere function run_experiment(_solver_upper, _Δp, seed, id)
     solver_upper = Symbol(_solver_upper)
     Δp = _Δp == "nothing" ? nothing : parse(Float64, _Δp)
     try
@@ -127,12 +131,14 @@ function run_experiment(_solver_upper, _Δp, seed, id)
 end
 
 # Run experiments on multiple threads
-Threads.@threads for (_solver_upper, _solver_lower, _Δp, seed) in _experiments
-    run_experiment(_solver_upper, _Δp, seed, Threads.threadid())
+@distributed for (_solver_upper, _solver_lower, _Δp, seed) in _experiments
+    id = myid()
+    @info "Running $(_solver_upper) $(_Δp) $seed on thread $id"
+    run_experiment(_solver_upper, _Δp, seed, id)
 end
 
 # Merge results
-for thread_id in 1:Threads.nthreads()
+for thread_id in 1:nprocs()
     open(save_file_name * "_$thread_id" * ".csv", "r") do f
         lines = readlines(f)
         open(save_file, "a") do f
