@@ -19,11 +19,11 @@ using Distributed
 ################################################
 
 # Parameters
-max_eval = 100
-solver_lower_name = "Ipopt"
-casename = "pglib_opf_case2869_pegase" # "pglib_opf_case300_ieee" "pglib_opf_case1354_pegase" "pglib_opf_case2869_pegase"
-save_file_name = "results/strategic_bidding_nlopt_$(casename)"
-save_file = save_file_name * ".csv"
+@everywhere max_eval = 100
+@everywhere solver_lower_name = "Ipopt"
+@everywhere casename = "pglib_opf_case2869_pegase" # "pglib_opf_case300_ieee" "pglib_opf_case1354_pegase" "pglib_opf_case2869_pegase"
+@everywhere save_file_name = "results/strategic_bidding_nlopt_$(casename)"
+@everywhere save_file = save_file_name * ".csv"
 
 # #### test Range Evaluation
 # Random.seed!(1)
@@ -62,7 +62,7 @@ experiements = Dict(
     :LN_COBYLA => [0.0],
 )
 
-res = Dict(
+@everywhere res = Dict(
     :FORCED_STOP => -5,
     :ROUNDOFF_LIMITED => -4,
     :OUT_OF_MEMORY => -3,
@@ -108,7 +108,7 @@ end
 @everywhere function run_experiment(_solver_upper, _Δp, seed, id)
     solver_upper = Symbol(_solver_upper)
     Δp = _Δp == "nothing" ? nothing : parse(Float64, _Δp)
-    try
+    # try
         Random.seed!(seed)
         start_time = time()
         profit, num_evals, trace, market_share, ret = test_bidding_nlopt(casename; percen_bidding_nodes=0.1, Δp=Δp, solver_upper=solver_upper, max_eval=max_eval)
@@ -123,15 +123,15 @@ end
                 write(f, "$solver_upper,$solver_lower_name,$Δp,$seed,$profit,$market_share,$num_evals,$(end_time - start_time),$ret\n")
             end
         end
-    catch e
-        @warn "Solver $(solver_upper) failed with seed $(seed)"
-        return nothing
-    end
+    # catch e
+    #     @warn "Solver $(solver_upper) failed with seed $(seed)"
+    #     return nothing
+    # end
     return nothing
 end
 
 # Run experiments on multiple threads
-@distributed for (_solver_upper, _solver_lower, _Δp, seed) in _experiments
+@sync @distributed for (_solver_upper, _solver_lower, _Δp, seed) in _experiments
     id = myid()
     @info "Running $(_solver_upper) $(_Δp) $seed on thread $id"
     run_experiment(_solver_upper, _Δp, seed, id)
@@ -142,8 +142,9 @@ for thread_id in 1:nprocs()
     open(save_file_name * "_$thread_id" * ".csv", "r") do f
         lines = readlines(f)
         open(save_file, "a") do f
-            for line in lines
+            for line in lines[2:end]
                 write(f, line)
+                write(f, "\n")
             end
         end
     end
