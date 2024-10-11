@@ -108,7 +108,7 @@ end
 @everywhere function run_experiment(_solver_upper, _Δp, seed, id)
     solver_upper = Symbol(_solver_upper)
     Δp = _Δp == "nothing" ? nothing : parse(Float64, _Δp)
-    # try
+    try
         Random.seed!(seed)
         start_time = time()
         profit, num_evals, trace, market_share, ret = test_bidding_nlopt(casename; percen_bidding_nodes=0.1, Δp=Δp, solver_upper=solver_upper, max_eval=max_eval)
@@ -123,10 +123,10 @@ end
                 write(f, "$solver_upper,$solver_lower_name,$Δp,$seed,$profit,$market_share,$num_evals,$(end_time - start_time),$ret\n")
             end
         end
-    # catch e
-    #     @warn "Solver $(solver_upper) failed with seed $(seed)"
-    #     return nothing
-    # end
+    catch e
+        @warn "Solver $(solver_upper) failed with seed $(seed)"
+        return nothing
+    end
     return nothing
 end
 
