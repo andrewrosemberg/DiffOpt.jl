@@ -18,7 +18,8 @@ include("opf.jl")
 max_eval = 100
 solver_lower, solver_lower_name = optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0), "Ipopt"
 casename = "pglib_opf_case2869_pegase" # "pglib_opf_case300_ieee" "pglib_opf_case1354_pegase" "pglib_opf_case2869_pegase"
-save_file = "results/strategic_bidding_nlopt_$(casename).csv"
+save_file_name = "results/strategic_bidding_nlopt_$(casename)"
+save_file = save_file_name * ".csv"
 
 # #### test Range Evaluation
 # Random.seed!(1)
@@ -93,7 +94,7 @@ else
 end
 
 for thread_id in 1:Threads.nthreads()
-    open(save_file * "_$thread_id", "w") do f
+    open(save_file_name * "_$thread_id" * ".csv", "w") do f
         write(f, "solver_upper,solver_lower,Δp,seed,profit,market_share,num_evals,time,status\n")
     end
 end
@@ -114,7 +115,7 @@ function run_experiment(_solver_upper, _Δp, seed, id)
             @warn "Solver $(solver_upper) failed with seed $(seed)"
             continue
         else
-            open(save_file * "_$thread_id", "a") do f
+            open(save_file_name * "_$id" * ".csv", "a") do f
                 write(f, "$solver_upper,$solver_lower_name,$Δp,$seed,$profit,$market_share,$num_evals,$(end_time - start_time),$ret\n")
             end
         end
@@ -126,12 +127,12 @@ end
 
 # Run experiments on multiple threads
 Threads.@threads for (_solver_upper, _solver_lower, _Δp, seed) in _experiments
-    run_experiment(_solver_upper, _Δp, seed)
+    run_experiment(_solver_upper, _Δp, seed, Threads.threadid())
 end
 
 # Merge results
 for thread_id in 1:Threads.nthreads()
-    open(save_file * "_$thread_id", "r") do f
+    open(save_file_name * "_$thread_id" * ".csv", "r") do f
         lines = readlines(f)
         open(save_file, "a") do f
             for line in lines
