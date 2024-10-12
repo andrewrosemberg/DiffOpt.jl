@@ -160,7 +160,7 @@ for file in iter_files
     open(file, "r") do f
         lines = readlines(f)
         open(save_file, "a") do f
-            for line in lines[1:end]
+            for line in lines[2:end]
                 write(f, line)
                 write(f, "\n")
             end
