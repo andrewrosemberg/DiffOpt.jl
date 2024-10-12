@@ -92,16 +92,16 @@ if isfile(save_file)
     old_results = CSV.read(save_file, DataFrame)
     _experiments = setdiff(_experiments, [(string(row.solver_upper), string(row.solver_lower), string(row.Δp), row.seed) for row in eachrow(old_results)])
 else
-    # open(save_file, "w") do f
-    #     write(f, "solver_upper,solver_lower,Δp,seed,profit,market_share,num_evals,time,status\n")
-    # end
-end
-
-for thread_id in 1:nprocs()
-    open(save_file_name * "_$thread_id" * ".csv", "w") do f
+    open(save_file, "w") do f
         write(f, "solver_upper,solver_lower,Δp,seed,profit,market_share,num_evals,time,status\n")
     end
 end
+
+# for thread_id in 1:nprocs()
+#     open(save_file_name * "_$thread_id" * ".csv", "w") do f
+#         write(f, "solver_upper,solver_lower,Δp,seed,profit,market_share,num_evals,time,status\n")
+#     end
+# end
 
 # Run experiments
 # for (_solver_upper, _, _Δp, seed) in _experiments
@@ -119,30 +119,48 @@ end
             @warn "Solver $(solver_upper) failed with seed $(seed)"
             return nothing
         else
-            open(save_file_name * "_$id" * ".csv", "a") do f
-                write(f, "$solver_upper,$solver_lower_name,$Δp,$seed,$profit,$market_share,$num_evals,$(end_time - start_time),$ret\n")
-            end
+            # open(save_file_name * "_row" * "_$id" * ".csv", "w") do f
+            #     write(f, "$solver_upper,$solver_lower_name,$Δp,$seed,$profit,$market_share,$num_evals,$(end_time - start_time),$ret\n")
+            # end
+            df = DataFrame(
+                solver_upper = [string(solver_upper)],
+                solver_lower = [solver_lower_name],
+                Δp = [string(Δp)],
+                seed = [seed],
+                profit = [profit],
+                market_share = [market_share],
+                num_evals = [num_evals],
+                time = [end_time - start_time],
+                status = [ret]
+            )
+            save_file_id = save_file_name * "_row" * "_$id" * ".csv"
+            @async CSV.write(save_file_id, df)
         end
     catch e
-        @warn "Solver $(solver_upper) failed with seed $(seed)"
+        @warn "Solver $(solver_upper) failed with seed $(seed)" e
         return nothing
     end
     return nothing
 end
 
 # Run experiments on multiple threads
-@sync @distributed for (_solver_upper, _solver_lower, _Δp, seed) in _experiments
-    id = myid()
-    @info "Running $(_solver_upper) $(_Δp) $seed on thread $id"
+@sync @distributed for id in collect(1:length(_experiments))
+    _solver_upper, _solver_lower, _Δp, seed = _experiments[id]
+    # id = uuid1()
+    @info "Running $(_solver_upper) $(_Δp) $seed on thread $(myid())" id
     run_experiment(_solver_upper, _Δp, seed, id)
 end
 
 # Merge results
-for thread_id in 1:nprocs()
-    open(save_file_name * "_$thread_id" * ".csv", "r") do f
+iter_files = readdir("results"; join=true)
+# filter
+iter_files = [file for file in iter_files if occursin(casename, file)]
+iter_files = [file for file in iter_files if occursin("row", file)]
+for file in iter_files
+    open(file, "r") do f
         lines = readlines(f)
         open(save_file, "a") do f
-            for line in lines[2:end]
+            for line in lines[1:end]
                 write(f, line)
                 write(f, "\n")
             end
