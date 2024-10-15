@@ -144,7 +144,7 @@ end
 end
 
 # Run experiments on multiple threads
-@sync @distributed for id in collect(1:length(_experiments))
+@sync @distributed for id in collect(length(_experiments):-1:1)
     _solver_upper, _solver_lower, _Δp, seed = _experiments[id]
     # id = uuid1()
     @info "Running $(_solver_upper) $(_Δp) $seed on thread $(myid())" id
