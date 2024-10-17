@@ -142,8 +142,7 @@ function build_opf_model(data; add_param_load=false, solver=Ipopt.Optimizer)
     return model, ref, demand_equilibrium, p, q, pg, qg, va, vm, pload, qload
 end
 
-function build_bidding_opf_model(case_name; percen_bidding_nodes=0.1, solver=Ipopt.Optimizer)
-    data = make_basic_network(pglib(case_name))
+function build_bidding_opf_model(data; percen_bidding_nodes=0.1, solver=Ipopt.Optimizer)
     data["basic_network"] = false
     # add bidding generators
     num_bidding_nodes = ceil(Int, length(data["bus"]) * percen_bidding_nodes)
@@ -171,7 +170,7 @@ function build_bidding_opf_model(case_name; percen_bidding_nodes=0.1, solver=Ipo
 
     println("")
     println("\033[1mSummary\033[0m")
-    println("   case........: $(case_name)")
+    # println("   case........: $(case_name)")
     println("   variables...: $(model_variables)")
     println("   constraints.: $(model_constraints)")
 
@@ -183,7 +182,7 @@ function build_bidding_opf_model(case_name; percen_bidding_nodes=0.1, solver=Ipo
     remaining_vars = setdiff(all_primal_variables, bidding_generators_dispatch)
     remaining_vars = setdiff(remaining_vars, _pg_bid)
     return Dict(
-        "case" => case_name,
+        # "case" => case_name,
         "model_variables" => remaining_vars,
         "bidding_generators_dispatch" => bidding_generators_dispatch,
         "bidding_lmps" => [demand_equilibrium[i] for i in bidding_nodes],
@@ -248,9 +247,9 @@ function fdiff_derivatives(f::Function)
     return ∇f, ∇²f
 end
 
-function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; percen_bidding_nodes=0.1, Δp=0.0001, solver_upper=Ipopt.Optimizer, solver_lower=Ipopt.Optimizer)
+function test_bilevel_ac_strategic_bidding(data; percen_bidding_nodes=0.1, Δp=0.0001, solver_upper=Ipopt.Optimizer, solver_lower=Ipopt.Optimizer)
     # test derivative of the dual of the demand equilibrium constraint
-    data = build_bidding_opf_model(case_name; percen_bidding_nodes=percen_bidding_nodes, solver=solver_lower)
+    data = build_bidding_opf_model(data; percen_bidding_nodes=percen_bidding_nodes, solver=solver_lower)
     pmax = data["pmax"]
     primal_vars = [data["bidding_generators_dispatch"]; data["model_variables"]]
     num_bidding_nodes = length(data["bidding_generators_dispatch"])
@@ -330,10 +329,10 @@ function test_bilevel_ac_strategic_bidding(case_name="pglib_opf_case5_pjm.m"; pe
     println("Dispatch: ", value.(pg))
 end
 
-function test_bidding_nlopt(case_name="pglib_opf_case5_pjm.m"; percen_bidding_nodes=0.1, Δp=0.0001, solver_upper=:LD_MMA, solver_lower=optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0), 
+function test_bidding_nlopt(data; percen_bidding_nodes=0.1, Δp=0.0001, solver_upper=:LD_MMA, solver_lower=optimizer_with_attributes(Ipopt.Optimizer, "print_level" => 0), 
     max_eval=100, pmax_multiplier=1.0, bool_trace=false
 )
-    data = build_bidding_opf_model(case_name; percen_bidding_nodes=percen_bidding_nodes, solver=solver_lower)
+    data = build_bidding_opf_model(data; percen_bidding_nodes=percen_bidding_nodes, solver=solver_lower)
     pmax = data["pmax"] * pmax_multiplier
     primal_vars = [data["bidding_generators_dispatch"]; data["model_variables"]]
     num_bidding_nodes = length(data["bidding_generators_dispatch"])
@@ -406,8 +405,8 @@ function test_bidding_nlopt(case_name="pglib_opf_case5_pjm.m"; percen_bidding_no
     return max_f, num_evals, trace, (sum(opt_x[1:num_bidding_nodes]) / data["total_market"]) * 100, ret
 end
 
-function sesitivity_load(case_name="pglib_opf_case5_pjm.m"; Δp=nothing, solver=Ipopt.Optimizer)
-    data = make_basic_network(pglib(case_name))
+function sesitivity_load(data; Δp=nothing, solver=Ipopt.Optimizer)
+    # data = make_basic_network(pglib(case_name))
 
     model, ref, demand_equilibrium, p, q, pg, qg, va, vm, pload, qload = build_opf_model(data; solver=solver, add_param_load=true)
     num_bus = length(ref[:bus])

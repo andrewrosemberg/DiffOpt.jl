@@ -30,40 +30,6 @@ test_compute_derivatives_Finite_Diff(DICT_PROBLEMS_cc, true)
 
 test_compute_derivatives_Analytical(DICT_PROBLEMS_Analytical_cc)
 
-################################################
-# Strategic bidding test
-################################################
-
-using JuMP, NLopt
-
-# "pglib_opf_case5_pjm" "pglib_opf_case14_ieee" "pglib_opf_case30_ieee" "pglib_opf_case57_ieee" "pglib_opf_case118_ieee" "pglib_opf_case300_ieee" "pglib_opf_case24_ieee_rts"
-# Random.seed!(1234)
-# @time test_bilevel_ac_strategic_bidding("pglib_opf_case24_ieee_rts"; percen_bidding_nodes=0.1)
-
-solver_upper = :LD_MMA # Ipopt.Optimizer
-solver_lower = Ipopt.Optimizer
-casename = "pglib_opf_case300_ieee"
-Random.seed!(1234)
-# @time test_bilevel_ac_strategic_bidding(casename; percen_bidding_nodes=0.1, Δp=nothing, solver_lower=solver_lower, solver_upper=solver_upper)
-@time trace = test_bidding_nlopt(casename; percen_bidding_nodes=0.1, Δp=0.0, solver_lower=solver_lower, solver_upper=solver_upper)
-# Δp=0.0 (no derivative): time=10.62s | obj= $161.94
-# Δp=nothing (no restoration): time=8.19s | obj= $510.66
-# Δp=0.001 (with derivative): time=10s | obj= $0
-
-# casename = "pglib_opf_case14_ieee"
-# Random.seed!(1234)
-# @time test_bilevel_ac_strategic_bidding(casename; percen_bidding_nodes=0.1, Δp=nothing)
-# Δp=0.0 (no derivative): time=8.93s | obj= $0.00
-# Δp=nothing (no restoration): time=0.94s | obj= $0.00
-# Δp=0.001 (with derivative): time=0.58s | obj= $0.00
-
-################################################
-# Load sensitivity
-################################################
-
-Δs_primal, Δs_dual = sesitivity_load("pglib_opf_case24_ieee_rts")
-Δs_dual[21,1:24]
-Δs_dual[21,25:end]
 
 ################################################
 # Moonlander test

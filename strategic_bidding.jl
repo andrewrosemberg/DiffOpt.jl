@@ -1,6 +1,15 @@
 using Distributed
 
+# Add worker processes if needed
 # addprocs()
+
+@everywhere pkg_path = @__DIR__
+
+@everywhere import Pkg
+
+@everywhere Pkg.activate(pkg_path)
+
+@everywhere Pkg.instantiate()
 
 @everywhere using JuMP, NLopt
 @everywhere using DataFrames, CSV
@@ -24,6 +33,10 @@ using Distributed
 @everywhere casename = "pglib_opf_case2869_pegase" # "pglib_opf_case300_ieee" "pglib_opf_case1354_pegase" "pglib_opf_case2869_pegase"
 @everywhere save_file_name = "results/strategic_bidding_nlopt_$(casename)"
 @everywhere save_file = save_file_name * ".csv"
+
+@everywhere data
+
+data = make_basic_network(pglib(casename))
 
 # #### test Range Evaluation
 # Random.seed!(1)
@@ -53,7 +66,7 @@ using Distributed
 seeds = collect(1:10)
 
 experiements = Dict(
-    :LD_MMA => [nothing], # 0.001
+    :LD_MMA => [nothing],
     :LN_BOBYQA => [0.0],
     :LD_CCSAQ => [nothing],
     :LD_SLSQP => [nothing],
@@ -76,52 +89,43 @@ experiements = Dict(
     :MAXTIME_REACHED => 6
 )
 
-# results = DataFrame(
-#     solver_upper = String[],
-#     solver_lower = String[],
-#     Δp = String[],
-#     seed = Int[],
-#     profit = Float64[],
-#     num_evals = Int[],
-#     time = Float64[]
-# )
+# Prepare the list of experiments
+_experiments = [
+    (string(solver_upper), solver_lower_name, string(Δp), seed)
+    for (solver_upper, Δp_values) in experiements
+    for Δp in Δp_values
+    for seed in seeds
+]
 
 # Check already executed experiments
-_experiments = [(string(solver_upper), solver_lower_name, string(Δp), seed) for (solver_upper, Δp_values) in experiements for Δp in Δp_values for seed in seeds]
 if isfile(save_file)
     old_results = CSV.read(save_file, DataFrame)
-    _experiments = setdiff(_experiments, [(string(row.solver_upper), string(row.solver_lower), string(row.Δp), row.seed) for row in eachrow(old_results)])
+    _experiments = setdiff(_experiments, [
+        (string(row.solver_upper), string(row.solver_lower), string(row.Δp), row.seed)
+        for row in eachrow(old_results)
+    ])
 else
     open(save_file, "w") do f
         write(f, "solver_upper,solver_lower,Δp,seed,profit,market_share,num_evals,time,status\n")
     end
 end
 
-# for thread_id in 1:nprocs()
-#     open(save_file_name * "_$thread_id" * ".csv", "w") do f
-#         write(f, "solver_upper,solver_lower,Δp,seed,profit,market_share,num_evals,time,status\n")
-#     end
-# end
-
-# Run experiments
-# for (_solver_upper, _, _Δp, seed) in _experiments
 @everywhere function run_experiment(_solver_upper, _Δp, seed, id)
+    _data = deepcopy(data)
     solver_upper = Symbol(_solver_upper)
     Δp = _Δp == "nothing" ? nothing : parse(Float64, _Δp)
     try
         Random.seed!(seed)
         start_time = time()
-        profit, num_evals, trace, market_share, ret = test_bidding_nlopt(casename; percen_bidding_nodes=0.1, Δp=Δp, solver_upper=solver_upper, max_eval=max_eval)
+        profit, num_evals, trace, market_share, ret = test_bidding_nlopt(
+            _data; percen_bidding_nodes=0.1, Δp=Δp, solver_upper=solver_upper, max_eval=max_eval
+        )
         end_time = time()
-        # push!(results, (string(solver_upper), solver_lower_name, string(Δp), seed, profit, num_evals, end_time - start_time))
         ret = res[ret]
         if ret < 0
             @warn "Solver $(solver_upper) failed with seed $(seed)"
             return nothing
         else
-            # open(save_file_name * "_row" * "_$id" * ".csv", "w") do f
-            #     write(f, "$solver_upper,$solver_lower_name,$Δp,$seed,$profit,$market_share,$num_evals,$(end_time - start_time),$ret\n")
-            # end
             df = DataFrame(
                 solver_upper = [string(solver_upper)],
                 solver_lower = [solver_lower_name],
@@ -133,45 +137,46 @@ end
                 time = [end_time - start_time],
                 status = [ret]
             )
-            save_file_id = save_file_name * "_row" * "_$id" * ".csv"
-            @async CSV.write(save_file_id, df)
+            return df
         end
     catch e
         @warn "Solver $(solver_upper) failed with seed $(seed)" e
         return nothing
     end
-    return nothing
 end
 
-# Run experiments on multiple threads
-@sync @distributed for id in collect(length(_experiments):-1:1)
-    _solver_upper, _solver_lower, _Δp, seed = _experiments[id]
-    # id = uuid1()
-    @info "Running $(_solver_upper) $(_Δp) $seed on thread $(myid())" id
-    run_experiment(_solver_upper, _Δp, seed, id)
-end
+# Run experiments using pmap
+experiments_list = [
+    (_solver_upper, _Δp, seed, id)
+    for (id, (_solver_upper, _, _Δp, seed)) in enumerate(_experiments)
+]
 
-# Merge results
-iter_files = readdir("results"; join=true)
-# filter
-iter_files = [file for file in iter_files if occursin(casename, file)]
-iter_files = [file for file in iter_files if occursin("row", file)]
-for file in iter_files
-    open(file, "r") do f
-        lines = readlines(f)
-        open(save_file, "a") do f
-            for line in lines[2:end]
-                write(f, line)
-                write(f, "\n")
-            end
-        end
+results = pmap(
+    experiment -> run_experiment(experiment...),
+    experiments_list
+)
+
+# Filter out failed experiments
+results = filter(!isnothing, results)
+
+# Combine results into a DataFrame
+if !isempty(results)
+    all_results = vcat(results...)
+    # Append to existing results if any
+    if isfile(save_file)
+        old_results = CSV.read(save_file, DataFrame)
+        combined_results = vcat(old_results, all_results)
+    else
+        combined_results = all_results
     end
-end
-
-# Save append results
-if isempty(_experiments)
+    # Save combined results
+    CSV.write(save_file, combined_results)
+else
     @info "No new results"
 end
+
+# Proceed with plotting or further analysis as needed
+
 
 # Plot results: One scatter point per solver_upper
 # - Each solver_upper should be an interval with the mean and std of the results per seed
