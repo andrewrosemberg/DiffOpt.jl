@@ -34,9 +34,7 @@ using Distributed
 @everywhere save_file_name = "results/strategic_bidding_nlopt_$(casename)"
 @everywhere save_file = save_file_name * ".csv"
 
-@everywhere data
-
-data = make_basic_network(pglib(casename))
+@everywhere data = make_basic_network(pglib(casename))
 
 # #### test Range Evaluation
 # Random.seed!(1)
