@@ -30,7 +30,7 @@ using Distributed
 # Parameters
 @everywhere max_eval = 100
 @everywhere solver_lower_name = "Ipopt"
-@everywhere casename = "pglib_opf_case1354_pegase" # "pglib_opf_case300_ieee" "pglib_opf_case1354_pegase" "pglib_opf_case2869_pegase"
+@everywhere casename = "pglib_opf_case2869_pegase" # "pglib_opf_case300_ieee" "pglib_opf_case1354_pegase" "pglib_opf_case2869_pegase"
 @everywhere save_file_name = "results/strategic_bidding_nlopt_$(casename)"
 @everywhere save_file = save_file_name * ".csv"
 
