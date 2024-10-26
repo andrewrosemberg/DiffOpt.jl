@@ -30,7 +30,7 @@ using Distributed
 # Parameters
 @everywhere max_eval = 100
 @everywhere solver_lower_name = "Ipopt"
-@everywhere casename = "pglib_opf_case3970_goc.m" # "pglib_opf_case300_ieee" "pglib_opf_case1354_pegase" "pglib_opf_case2869_pegase" "pglib_opf_case2000_goc"
+@everywhere casename = "pglib_opf_case300_ieee" # "pglib_opf_case300_ieee" "pglib_opf_case1354_pegase" "pglib_opf_case2869_pegase" "pglib_opf_case2000_goc" "pglib_opf_case2868_rte"
 @everywhere save_file_name = "results/strategic_bidding_nlopt_$(casename)"
 @everywhere save_file = save_file_name * ".csv"
 
@@ -64,15 +64,16 @@ using Distributed
 seeds = collect(1:10)
 
 experiements = Dict(
-    :LD_MMA => [nothing],
-    :LN_BOBYQA => [0.0],
-    :LD_CCSAQ => [nothing],
-    :LD_SLSQP => [nothing],
-    # :LD_LBFGS => [nothing],
-    :LD_TNEWTON_PRECOND_RESTART => [nothing],
-    :LN_COBYLA => [0.0],
-    :LN_NELDERMEAD => [0.0],
-    :LN_NEWUOA_BOUND => [0.0]
+    # :LD_MMA => [nothing],
+    # :LN_BOBYQA => [0.0],
+    # :LD_CCSAQ => [nothing],
+    # :LD_SLSQP => [nothing],
+    # # :LD_LBFGS => [nothing],
+    # :LD_TNEWTON_PRECOND_RESTART => [nothing],
+    # :LN_COBYLA => [0.0],
+    # :LN_NELDERMEAD => [0.0],
+    # :LN_NEWUOA_BOUND => [0.0],
+    # :G_MLSL_LDS => [0.0],
 )
 
 @everywhere res = Dict(

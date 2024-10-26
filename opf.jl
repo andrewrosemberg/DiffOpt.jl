@@ -390,6 +390,9 @@ function test_bidding_nlopt(data; percen_bidding_nodes=0.1, Δp=0.0001, solver_u
     end
 
     opt = NLopt.Opt(solver_upper, num_bidding_nodes)
+    if solver_upper == :G_MLSL_LDS
+        NLopt.nlopt_set_local_optimizer(opt, NLopt.Opt(:LN_NELDERMEAD, num_bidding_nodes))
+    end
     NLopt.lower_bounds!(opt, fill(0.0, num_bidding_nodes))
     NLopt.upper_bounds!(opt, fill(pmax, num_bidding_nodes))
     NLopt.xtol_rel!(opt, 1e-4)
