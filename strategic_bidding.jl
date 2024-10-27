@@ -64,15 +64,15 @@ using Distributed
 seeds = collect(1:10)
 
 experiements = Dict(
-    # :LD_MMA => [nothing],
-    # :LN_BOBYQA => [0.0],
-    # :LD_CCSAQ => [nothing],
-    # :LD_SLSQP => [nothing],
-    # # :LD_LBFGS => [nothing],
-    # :LD_TNEWTON_PRECOND_RESTART => [nothing],
-    # :LN_COBYLA => [0.0],
-    # :LN_NELDERMEAD => [0.0],
-    # :LN_NEWUOA_BOUND => [0.0],
+    :LD_MMA => [nothing],
+    :LN_BOBYQA => [0.0],
+    :LD_CCSAQ => [nothing],
+    :LD_SLSQP => [nothing],
+    # :LD_LBFGS => [nothing],
+    :LD_TNEWTON_PRECOND_RESTART => [nothing],
+    :LN_COBYLA => [0.0],
+    :LN_NELDERMEAD => [0.0],
+    :LN_NEWUOA_BOUND => [0.0],
     # :G_MLSL_LDS => [0.0],
 )
 
@@ -190,7 +190,7 @@ using Statistics
 
 results = CSV.read(save_file, DataFrame)
 
-ignore_solver_upper = [:LD_LBFGS]
+ignore_solver_upper = [:LD_LBFGS; :G_MLSL_LDS]
 
 results = results[[!(Symbol(sv_up) ∈ ignore_solver_upper) for sv_up in results.solver_upper], :]
 
@@ -216,3 +216,55 @@ plt = scatter(results_d.market_share_mean, results_d.gap_mean, group=results_d.s
 
 # save
 savefig(plt, "results/strategic_bidding_nlopt_$(casename).pdf")
+
+# save a csv and plot for all cases the percentage gain (or loss) the best gradient-solver (Δp=="nothing") is when compared to the best non-gradient solver (Δp!=nothing) (inform mean and std)
+using Plots
+using Statistics
+using DataFrames, CSV
+seeds = collect(1:10)
+cases = ["pglib_opf_case300_ieee", "pglib_opf_case1354_pegase", "pglib_opf_case2869_pegase", "pglib_opf_case2000_goc", "pglib_opf_case2868_rte.m"]
+ignore_solver_upper = [:LD_LBFGS; :G_MLSL_LDS]
+avg_gains = Array{Float64}(undef, length(cases))
+std_gains = Array{Float64}(undef, length(cases))
+avg_gains_all = Array{Float64}(undef, length(cases))
+std_gains_all = Array{Float64}(undef, length(cases))
+for (i, casename) in enumerate(cases)
+    save_file = "results/strategic_bidding_nlopt_$(casename).csv"
+    results = CSV.read(save_file, DataFrame)
+    results = results[[!(Symbol(sv_up) ∈ ignore_solver_upper) for sv_up in results.solver_upper], :]
+    results_d = combine(groupby(results, [:solver_upper, :Δp]), :profit => mean)
+    solver_upper_grad = results_d[results_d.Δp .== "nothing", :].solver_upper
+    solver_upper_nograd = results_d[results_d.Δp .!= "nothing", :].solver_upper
+    best_solver_upper_grad = solver_upper_grad[argmax(results_d[results_d.Δp .== "nothing", :].profit_mean)]
+    best_solver_upper_nograd = solver_upper_nograd[argmax(results_d[results_d.Δp .!= "nothing", :].profit_mean)]
+    mean_per_seed_non_gradient = [mean(results.profit[(results.seed .== seed) .& (results.Δp .!= "nothing")]) for seed in seeds]
+    mean_per_seed_gradient = [mean(results.profit[(results.seed .== seed) .& (results.Δp .== "nothing")]) for seed in seeds]
+    gains = []
+    for seed in seeds
+        profit_grad = results[(results.seed .== seed) .* (results.solver_upper .== best_solver_upper_grad), :]
+        if isempty(profit_grad)
+            continue
+        end
+        profit_grad = profit_grad.profit[1]
+        profit_nograd = results[(results.seed .== seed) .* (results.solver_upper .== best_solver_upper_nograd), :]
+        if isempty(profit_nograd)
+            continue
+        end
+        profit_nograd = profit_nograd.profit[1]
+        push!(gains, (profit_grad - profit_nograd) * 100 / profit_nograd)
+    end
+    avg_gains[i] = mean(gains)
+    try
+        std_gains[i] = std(gains)
+    catch e
+        std_gains[i] = 0.0
+    end
+    gains_all = (mean_per_seed_gradient .- mean_per_seed_non_gradient) * 100 ./ mean_per_seed_non_gradient
+    avg_gains_all[i] = mean(gains_all)
+    std_gains_all[i] = std(gains_all)
+end
+
+# save
+df = DataFrame(casename=cases, Best_Solver_Improvement_AVG=avg_gains, Best_Solver_Improvement_STD=std_gains, All_Solvers_Improvement_AVG=avg_gains_all, All_Solvers_Improvement_STD=std_gains_all)
+    
+
