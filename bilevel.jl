@@ -27,7 +27,7 @@ using Distributed
     # circle network with num_nodes extra random lines
     comb = collect(combinations(1:num_nodes,2))
     num_comb = length(comb)
-    rand_lines = comb[sample(1:num_comb, num_nodes * 2, replace = false)]
+    rand_lines = comb[sample(1:num_comb, ceil(Int, num_nodes / 2), replace = false)]
     lines = vcat([(i, i+1) for i=1:num_nodes-1], [(num_nodes, 1)], rand_lines)
     num_lines = length(lines)
     line_limits = rand(1:1:100, num_lines)
@@ -87,6 +87,7 @@ end
 end
 
 @everywhere function compare_methods(num_nodes=10; seed=1)
+    try
     bilevel_model, qS, lambda = build_bilevel(num_nodes; seed=seed)
     evaluator_lower_level = JuMP.Model(Gurobi.Optimizer)
     @variable(evaluator_lower_level, _qS[i=1:num_nodes])
@@ -98,14 +99,24 @@ end
     exact_time = solve_bilevel_exact(bilevel_model, lambda)
     # exact_profit = calculate_profit(evaluator_lower_level, demand_equilibrium, gS, _qS, qS)
     return nlp_time / opf_time, exact_time / opf_time
+    catch e
+        return NaN, NaN
+    end
 end
 
-nodes = 7:10:200
+nodes = 7:2:25
 results = pmap(x->compare_methods(x), nodes)
+
+# success nodes
+_results = [(i, (r[1], r[2])) for (i,r) in enumerate(results) if !isnan(r[1]) && !isnan(r[2])]
+nodes = [nodes[r[1]] for r in _results]
+results = [r[2] for r in _results]
 
 # Save results
 using CSV, DataFrames
-CSV.write(joinpath(@__DIR__, "results", "complexity_mpec.csv"), DataFrame(nodes=nodes, nlp=[r[1] for r in results], exact=[r[2] for r in results]))
+df_old = CSV.read(joinpath(@__DIR__, "results", "complexity_mpec.csv"))
+df = DataFrame(nodes=nodes, nlp=[r[1] for r in results], exact=[r[2] for r in results])
+CSV.write(joinpath(@__DIR__, "results", "complexity_mpec.csv"), df)
 
 using Plots
 # log y axis scale
