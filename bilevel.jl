@@ -66,7 +66,7 @@ end
 
 @everywhere function solve_bilevel_exact(model, lambda)
     set_optimizer(model,
-        ()->QuadraticToBinary.Optimizer{Float64}(Gurobi.Optimizer())
+        ()->QuadraticToBinary.Optimizer{Float64}(MOI.instantiate(optimizer_with_attributes(Gurobi.Optimizer, "MIPGap" => 0.1)))
     )
     BilevelJuMP.set_mode(model,
         BilevelJuMP.FortunyAmatMcCarlMode(dual_big_M = 1000)
@@ -87,7 +87,7 @@ end
 end
 
 @everywhere function compare_methods(num_nodes=10; seed=1)
-    try
+    # try
     bilevel_model, qS, lambda = build_bilevel(num_nodes; seed=seed)
     evaluator_lower_level = JuMP.Model(Gurobi.Optimizer)
     @variable(evaluator_lower_level, _qS[i=1:num_nodes])
@@ -99,12 +99,12 @@ end
     exact_time = solve_bilevel_exact(bilevel_model, lambda)
     # exact_profit = calculate_profit(evaluator_lower_level, demand_equilibrium, gS, _qS, qS)
     return nlp_time / opf_time, exact_time / opf_time
-    catch e
-        return NaN, NaN
-    end
+    # catch e
+    #     return NaN, NaN
+    # end
 end
 
-nodes = 7:2:25
+nodes = 7:5:57
 results = pmap(x->compare_methods(x), nodes)
 
 # success nodes
@@ -114,14 +114,17 @@ results = [r[2] for r in _results]
 
 # Save results
 using CSV, DataFrames
-df_old = CSV.read(joinpath(@__DIR__, "results", "complexity_mpec.csv"))
 df = DataFrame(nodes=nodes, nlp=[r[1] for r in results], exact=[r[2] for r in results])
+if isfile(joinpath(@__DIR__, "results", "complexity_mpec.csv"))
+    df_old = CSV.read(joinpath(@__DIR__, "results", "complexity_mpec.csv"), DataFrame)
+    df = vcat(df_old, df)
+end
 CSV.write(joinpath(@__DIR__, "results", "complexity_mpec.csv"), df)
 
 using Plots
 # log y axis scale
-plt = Plots.plot(nodes, [r[1] for r in results], label="NLP", xlabel="Number of nodes", ylabel="Time (x OPF)", yscale=:log10)
-Plots.plot!(plt, nodes, [r[2] for r in results], label="Exact", xlabel="Number of nodes", ylabel="Time (x OPF)", yscale=:log10)
+plt = Plots.plot(df.nodes, df.nlp, label="NLP", xlabel="Number of nodes", ylabel="Time (x OPF)", yscale=:log10)
+Plots.plot!(plt, df.nodes, df.exact, label="Exact", xlabel="Number of nodes", ylabel="Time (x OPF)", yscale=:log10)
 Plots.savefig(plt, joinpath(@__DIR__, "results", "complexity_mpec.pdf"))
 
 

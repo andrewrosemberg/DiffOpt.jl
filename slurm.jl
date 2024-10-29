@@ -11,7 +11,7 @@ end
 
 using Distributed, ClusterManagers
 
-np = 20 #
+np = 5 #
 addprocs(SlurmManager(np), job_file_loc = ARGS[1])
 
 println("We are all connected and ready.")
